@@ -757,7 +757,7 @@ function handleGetDashboard(params) {
       current: state.current_student_id ? maskStudent(stuMap[String(state.current_student_id)]) : null,
       calling: calling ? maskStudent(stuMap[String(calling.student_id)]) : null,
       waiting_count: waiting.length,
-      next: sortedQueue.slice(0, 3).map(r => ({
+      next: sortedQueue.slice(0, 6).map(r => ({
         ...maskStudent(stuMap[String(r.student_id)]),
         type: r.type,
         block: Number(r.block)
