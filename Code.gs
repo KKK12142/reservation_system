@@ -74,7 +74,7 @@ function dispatch(action, params) {
   const handlers = {
     // 공용
     'ping':                () => ({ now: nowIso(), block: getCurrentBlock() }),
-    'getBooths':           () => readSheetCached(SHEETS.BOOTHS).filter(b => isTrue(b.active)),
+    'getBooths':           () => handleGetBooths(params),
     'getCurrentBlock':     () => ({ block: getCurrentBlock() }),
 
     // 학생용
@@ -287,6 +287,17 @@ function toLoginResponse(row) {
   };
 }
 
+// 학년이 주어지면 해당 학년 + 공간C(target_grade=0) 부스만 반환. 미지정이면 전체.
+function handleGetBooths(params) {
+  const grade = params && params.grade ? Number(params.grade) : null;
+  const all = readSheetCached(SHEETS.BOOTHS).filter(b => isTrue(b.active));
+  if (!grade) return all;
+  return all.filter(b => {
+    const bg = Number(b.target_grade);
+    return bg === 0 || bg === grade;
+  });
+}
+
 function handleGetMyQR(params) {
   const sid = String(params.student_id || '');
   const stu = readSheetCached(SHEETS.STUDENTS).find(s => String(s.student_id) === sid);
@@ -357,6 +368,18 @@ function handleCreateReservation(params) {
       if (!(blockNum >= 1 && blockNum <= 6)) throw new Error('블록은 1~6 중 선택해야 합니다');
     } else {
       blockNum = currentBlock >= 7 ? 6 : currentBlock;
+    }
+
+    // 규칙 3: 같은 블록 동시 예약 금지 (학생은 한 시간대에 한 부스만)
+    if (myActive.some(r => Number(r.block) === blockNum)) {
+      throw new Error(`이미 ${blockNum}블록에 다른 부스 예약이 있습니다`);
+    }
+
+    // 규칙 4: 학년 매칭 (target_grade=0은 공간C 전체대상이라 통과)
+    const stuGrade = Number(stu.grade);
+    const boothGrade = Number(booth.target_grade);
+    if (boothGrade !== 0 && boothGrade !== stuGrade) {
+      throw new Error(`이 부스는 ${boothGrade}학년 전용입니다`);
     }
 
     const reservation = {

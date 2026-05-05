@@ -358,7 +358,7 @@ async function showReserve() {
   showLoader(true);
   try {
     const [booths, blockInfo, myRes] = await Promise.all([
-      callApi('getBooths', {}),
+      callApi('getBooths', { grade: state.student.grade }),
       callApi('getCurrentBlock', {}),
       callApi('getMyReservations', { student_id: state.student.student_id })
     ]);
@@ -376,9 +376,11 @@ async function showReserve() {
       banner.textContent = `${blockInfo.block}블록 진행 중 — 부스를 누르면 즉시 대기열에 추가됩니다`;
     }
 
-    const activeSubjects = new Set(myRes
-      .filter(r => ['waiting', 'calling', 'in_progress'].indexOf(r.status) !== -1)
-      .map(r => r.subject_group));
+    const activeReservations = myRes.filter(r =>
+      ['waiting', 'calling', 'in_progress'].indexOf(r.status) !== -1);
+    const activeSubjects = new Set(activeReservations.map(r => r.subject_group));
+    const activeBlocks = new Set(activeReservations.map(r => Number(r.block)));
+    state.activeBlocks = activeBlocks;
 
     const grouped = {};
     booths.forEach(b => (grouped[b.space] = grouped[b.space] || []).push(b));
@@ -393,11 +395,20 @@ async function showReserve() {
       header.textContent = space === 'C' ? '공간 C — 학생 멘토 부스' : `공간 ${space} — 교과 상담`;
       list.appendChild(header);
       items.forEach(b => {
-        const taken = activeSubjects.has(b.subject_group);
+        const sameSubject = activeSubjects.has(b.subject_group);
+        // walk-in 모드면 현재 블록이 이미 잡힌 학생은 곧바로 비활성
+        const walkInBlockConflict = !isPreReg && !isClosed && activeBlocks.has(blockInfo.block);
+        const disabled = sameSubject || isClosed || walkInBlockConflict;
+
+        let reasonLabel = '신청 ›';
+        if (sameSubject) reasonLabel = '예약됨';
+        else if (isClosed) reasonLabel = '마감';
+        else if (walkInBlockConflict) reasonLabel = '같은 블록 진행중';
+
         const card = document.createElement('button');
         card.className = 'w-full text-left bg-white rounded-xl shadow-sm p-3 mb-2 flex items-center justify-between transition active:scale-95 ' +
-          ((taken || isClosed) ? 'opacity-50' : '');
-        card.disabled = taken || isClosed;
+          (disabled ? 'opacity-50' : '');
+        card.disabled = disabled;
         const grade = Number(b.target_grade);
         const gradeLabel = grade === 0 ? '전체' : grade + '학년 담당';
         card.innerHTML = `
@@ -405,7 +416,7 @@ async function showReserve() {
             <div class="font-semibold">${b.subject_group}</div>
             <div class="text-xs text-slate-500 mt-0.5">${gradeLabel} · ${b.room || b.booth_id}</div>
           </div>
-          <div class="text-xs ${taken ? 'text-slate-400' : 'text-indigo-600'}">${taken ? '예약됨' : '신청 ›'}</div>
+          <div class="text-xs ${disabled ? 'text-slate-400' : 'text-indigo-600'}">${reasonLabel}</div>
         `;
         card.addEventListener('click', () => onBoothClick(b, isPreReg));
         list.appendChild(card);
@@ -424,6 +435,25 @@ function onBoothClick(booth, isPreReg) {
     const grade = Number(booth.target_grade);
     const gradeLabel = grade === 0 ? '' : ` (${grade}학년 담당)`;
     document.getElementById('picker-booth').textContent = `${booth.subject_group}${gradeLabel} · ${booth.room || ''}`;
+
+    // 이미 잡힌 블록은 비활성화 (학생은 같은 시간대 한 부스만)
+    const conflicts = state.activeBlocks || new Set();
+    document.querySelectorAll('.block-btn').forEach(btn => {
+      const block = Number(btn.dataset.block);
+      const conflict = conflicts.has(block);
+      btn.disabled = conflict;
+      btn.className = 'block-btn p-3 border rounded-lg text-left transition ' +
+        (conflict ? 'opacity-40 bg-slate-50 cursor-not-allowed' : 'active:scale-95');
+      // 기존 hint 정리
+      const oldHint = btn.querySelector('.conflict-hint');
+      if (oldHint) oldHint.remove();
+      if (conflict) {
+        const hint = document.createElement('div');
+        hint.className = 'conflict-hint text-xs text-red-500 mt-0.5';
+        hint.textContent = '다른 부스 예약중';
+        btn.appendChild(hint);
+      }
+    });
     document.getElementById('block-picker').classList.remove('hidden');
   } else {
     confirmAndCreate(booth, null);
