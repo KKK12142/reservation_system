@@ -85,6 +85,9 @@
       <button id="action-scan" class="w-full bg-emerald-600 text-white py-5 rounded-xl text-xl font-semibold hidden active:scale-[0.98] transition">
         📷 학생 QR 스캔
       </button>
+      <button id="action-manual" class="w-full bg-white border-2 border-emerald-600 text-emerald-700 py-3 rounded-xl font-medium hidden active:scale-[0.98] transition">
+        ⌨️ 학번 직접 입력 (카메라 불가 시)
+      </button>
       <button id="action-complete" class="w-full bg-rose-600 text-white py-5 rounded-xl text-xl font-semibold hidden active:scale-[0.98] transition">
         ✅ 상담 완료
       </button>
@@ -116,6 +119,22 @@
   </div>
   <div class="text-center text-white text-sm pb-6 px-4">
     학생 폰의 QR 코드를 카메라 정중앙에 맞춰 주세요
+  </div>
+</div>
+
+<!-- 학번 직접 입력 모달 -->
+<div id="manual-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-40 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm p-5">
+    <div class="text-base font-semibold mb-1">학생 학번 입력</div>
+    <div class="text-xs text-slate-500 mb-4">학년(2) + 반(2) + 번호(2) — 예: 010215</div>
+    <input id="manual-input" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}"
+      class="w-full border-2 rounded-lg px-3 py-3 text-2xl tracking-widest text-center font-mono mb-3"
+      placeholder="000000" autocomplete="off">
+    <div id="manual-error" class="hidden text-sm text-red-600 mb-3"></div>
+    <div class="flex gap-2">
+      <button id="manual-cancel" class="flex-1 py-2.5 border rounded-lg text-slate-600">취소</button>
+      <button id="manual-submit" class="flex-1 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold">상담 시작</button>
+    </div>
   </div>
 </div>
 
@@ -330,12 +349,13 @@ function renderState(data) {
   const inProg = document.getElementById('state-in-progress');
   const aCall = document.getElementById('action-call-next');
   const aScan = document.getElementById('action-scan');
+  const aManual = document.getElementById('action-manual');
   const aDone = document.getElementById('action-complete');
   const aNoShow = document.getElementById('action-no-show');
 
   // 모두 숨김
   [idle, calling, inProg].forEach(el => el.classList.add('hidden'));
-  [aCall, aScan, aDone, aNoShow].forEach(el => el.classList.add('hidden'));
+  [aCall, aScan, aManual, aDone, aNoShow].forEach(el => el.classList.add('hidden'));
 
   if (data.current) {
     // IN_PROGRESS
@@ -355,6 +375,7 @@ function renderState(data) {
     document.getElementById('calling-info').textContent =
       `${data.calling.subject_group} · ${data.calling.block}블록 · ${data.calling.type === 'reserved' ? '사전예약' : '당일추가'}`;
     aScan.classList.remove('hidden');
+    aManual.classList.remove('hidden');
     aNoShow.classList.remove('hidden');
     stopProgressTimer();
     startCallingTimer(data.calling.called_at);
@@ -366,6 +387,7 @@ function renderState(data) {
       waitingCount === 0 ? '대기 중인 학생이 없습니다' : `대기 ${waitingCount}명`;
     if (waitingCount > 0) aCall.classList.remove('hidden');
     aScan.classList.remove('hidden');
+    aManual.classList.remove('hidden');
     stopProgressTimer();
     stopCallingTimer();
   }
@@ -563,14 +585,59 @@ function showWelcome(student) {
   setTimeout(() => m.classList.add('hidden'), 1800);
 }
 
+// ===== 학번 직접 입력 폴백 =====
+function openManualModal() {
+  const m = document.getElementById('manual-modal');
+  const input = document.getElementById('manual-input');
+  document.getElementById('manual-error').classList.add('hidden');
+  input.value = '';
+  m.classList.remove('hidden');
+  setTimeout(() => input.focus(), 100);
+}
+
+function closeManualModal() {
+  document.getElementById('manual-modal').classList.add('hidden');
+}
+
+async function submitManual() {
+  const input = document.getElementById('manual-input');
+  const errEl = document.getElementById('manual-error');
+  const sid = input.value.trim();
+  errEl.classList.add('hidden');
+  if (!/^\d{6}$/.test(sid)) {
+    errEl.textContent = '6자리 학번을 입력하세요';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  showLoader(true);
+  try {
+    const r = await callApi('manualScan', { booth_id: state.boothId, student_id: sid });
+    closeManualModal();
+    showWelcome(r.student);
+    state.lastQueueV = '';
+    refreshQueue();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    showLoader(false);
+  }
+}
+
 // ===== 초기화 =====
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('logout-btn').addEventListener('click', logout);
   document.getElementById('action-call-next').addEventListener('click', callNext);
   document.getElementById('action-scan').addEventListener('click', openScanner);
+  document.getElementById('action-manual').addEventListener('click', openManualModal);
   document.getElementById('action-complete').addEventListener('click', complete);
   document.getElementById('action-no-show').addEventListener('click', noShow);
   document.getElementById('scanner-cancel').addEventListener('click', closeScanner);
+  document.getElementById('manual-cancel').addEventListener('click', closeManualModal);
+  document.getElementById('manual-submit').addEventListener('click', submitManual);
+  document.getElementById('manual-input').addEventListener('keypress', e => {
+    if (e.key === 'Enter') submitManual();
+  });
 
   // 백그라운드 시 폴링·스캐너 정지
   document.addEventListener('visibilitychange', () => {

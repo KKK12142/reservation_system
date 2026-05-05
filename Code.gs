@@ -92,6 +92,7 @@ function dispatch(action, params) {
     'completeConsultation':() => handleCompleteConsultation(params),
     'skipNoShow':          () => handleSkipNoShow(params),
     'getBoothQueue':       () => handleGetBoothQueue(params),
+    'manualScan':          () => handleManualScan(params),
 
     // 전광판
     'getDashboard':        () => handleGetDashboard(params),
@@ -510,64 +511,79 @@ function handleScanQR(params) {
     if (!stu) throw new Error('등록되지 않은 학생입니다');
     if (stu.qr_token !== scannedToken) throw new Error('QR 검증 실패 — 본인 QR이 맞는지 확인해 주세요');
 
-    // 같은 부스의 calling/waiting 예약 중에서 매칭
-    const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
-    const candidates = sheet.rows.filter(r =>
-      String(r.student_id) === String(scannedSid) &&
-      r.booth_id === boothId &&
-      ['calling', 'waiting'].indexOf(r.status) !== -1
-    );
-    if (candidates.length === 0) {
-      throw new Error(`${stu.name} 학생은 본 부스에 예약이 없습니다 (부스: ${boothId})`);
-    }
-
-    // calling 상태가 우선, 없으면 waiting 중 첫 번째
-    const target = candidates.find(r => r.status === 'calling') || candidates[0];
-    const startedAt = nowIso();
-
-    updateRowByIndex(SHEETS.RESERVATIONS, target._rowIndex, {
-      status: 'in_progress',
-      called_at: target.called_at || startedAt
-    });
-
-    appendRow(SHEETS.LOG, {
-      log_id: shortId('L'),
-      reservation_id: target.reservation_id,
-      student_id: String(scannedSid),
-      booth_id: boothId,
-      subject_group: target.subject_group,
-      started_at: startedAt,
-      ended_at: '',
-      duration_sec: '',
-      type: target.type,
-      memo: ''
-    });
-
-    upsertCurrentState(boothId, {
-      current_reservation_id: target.reservation_id,
-      current_student_id: String(scannedSid),
-      current_started_at: startedAt,
-      updated_at: startedAt
-    });
-
-    invalidateSheetCache(SHEETS.RESERVATIONS);
-    invalidateSheetCache(SHEETS.STATE);
-    invalidateSheetCache(SHEETS.LOG);
-
-    return {
-      student: {
-        student_id: String(stu.student_id),
-        name: stu.name,
-        grade: Number(stu.grade),
-        class_no: Number(stu.class_no),
-        number: Number(stu.number)
-      },
-      reservation_id: target.reservation_id,
-      type: target.type,
-      block: Number(target.block),
-      started_at: startedAt
-    };
+    return startConsultationForStudent(boothId, stu);
   });
+}
+
+// 카메라 사용 불가 환경(iOS Apps Script iframe) 폴백.
+// 교사가 학생 학번을 직접 입력. 토큰 검증은 건너뛰고 교사 육안 확인에 의존.
+function handleManualScan(params) {
+  const boothId = String(params.booth_id || '');
+  const sid = String(params.student_id || '').trim();
+  if (!sid) throw new Error('학번을 입력하세요');
+  return withLock(() => {
+    const stu = readSheet(SHEETS.STUDENTS).find(s => String(s.student_id) === sid);
+    if (!stu) throw new Error('등록되지 않은 학번입니다');
+    return startConsultationForStudent(boothId, stu);
+  });
+}
+
+// QR 스캔 / 수동 입력에서 공통으로 호출. 호출자가 lock 안에서 실행해야 함.
+function startConsultationForStudent(boothId, stu) {
+  const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
+  const candidates = sheet.rows.filter(r =>
+    String(r.student_id) === String(stu.student_id) &&
+    r.booth_id === boothId &&
+    ['calling', 'waiting'].indexOf(r.status) !== -1
+  );
+  if (candidates.length === 0) {
+    throw new Error(`${stu.name} 학생은 본 부스에 예약이 없습니다 (부스: ${boothId})`);
+  }
+  const target = candidates.find(r => r.status === 'calling') || candidates[0];
+  const startedAt = nowIso();
+
+  updateRowByIndex(SHEETS.RESERVATIONS, target._rowIndex, {
+    status: 'in_progress',
+    called_at: target.called_at || startedAt
+  });
+
+  appendRow(SHEETS.LOG, {
+    log_id: shortId('L'),
+    reservation_id: target.reservation_id,
+    student_id: String(stu.student_id),
+    booth_id: boothId,
+    subject_group: target.subject_group,
+    started_at: startedAt,
+    ended_at: '',
+    duration_sec: '',
+    type: target.type,
+    memo: ''
+  });
+
+  upsertCurrentState(boothId, {
+    current_reservation_id: target.reservation_id,
+    current_student_id: String(stu.student_id),
+    current_started_at: startedAt,
+    updated_at: startedAt
+  });
+
+  invalidateSheetCache(SHEETS.RESERVATIONS);
+  invalidateSheetCache(SHEETS.STATE);
+  invalidateSheetCache(SHEETS.LOG);
+
+  return {
+    student: {
+      student_id: String(stu.student_id),
+      name: stu.name,
+      grade: Number(stu.grade),
+      class_no: Number(stu.class_no),
+      number: Number(stu.number)
+    },
+    reservation_id: target.reservation_id,
+    type: target.type,
+    block: Number(target.block),
+    started_at: startedAt
+  };
 }
 
 function handleCompleteConsultation(params) {
