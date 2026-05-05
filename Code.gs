@@ -33,7 +33,6 @@ function doGet(e) {
       return HtmlService.createHtmlOutput('Not found: ' + page);
     }
     const t = HtmlService.createTemplateFromFile(page);
-    t.appUrl = ScriptApp.getService().getUrl();
     t.boothId = params.booth_id || '';
     t.grade = params.grade || '';
     return t.evaluate()
@@ -102,8 +101,7 @@ function dispatch(action, params) {
     // 전광판
     'getDashboard':        () => handleGetDashboard(params),
 
-    // 셋업/관리
-    'setup':               () => setupSheets()
+    // 셋업/관리 함수는 Apps Script 에디터에서 직접 실행한다.
   };
   const fn = handlers[action];
   if (!fn) throw new Error('Unknown action: ' + action);
@@ -363,6 +361,9 @@ function handleCreateReservation(params) {
     if (!isTrue(booth.active)) throw new Error('해당 부스는 운영하지 않습니다');
 
     const currentBlock = getCurrentBlock();
+    if (currentBlock >= 7) {
+      throw new Error('박람회 종료 후에는 신규 예약할 수 없습니다');
+    }
     const isPreReg = currentBlock === 0;
 
     const reservations = readSheet(SHEETS.RESERVATIONS);
@@ -389,7 +390,7 @@ function handleCreateReservation(params) {
       blockNum = Number(params.block);
       if (!(blockNum >= 1 && blockNum <= 6)) throw new Error('블록은 1~6 중 선택해야 합니다');
     } else {
-      blockNum = currentBlock >= 7 ? 6 : currentBlock;
+      blockNum = currentBlock;
     }
 
     // 규칙 3: 같은 블록 동시 예약 금지 (학생은 한 시간대에 한 부스만)
@@ -430,8 +431,8 @@ function handleCancelReservation(params) {
     const row = sheet.rows.find(r => r.reservation_id === rid);
     if (!row) throw new Error('예약을 찾을 수 없습니다');
     if (String(row.student_id) !== sid) throw new Error('본인 예약만 취소할 수 있습니다');
-    if (['completed', 'in_progress'].indexOf(row.status) !== -1) {
-      throw new Error('이미 진행 중이거나 완료된 예약은 취소할 수 없습니다');
+    if (row.status !== 'waiting') {
+      throw new Error('대기 중인 예약만 취소할 수 있습니다');
     }
     updateRowByIndex(SHEETS.RESERVATIONS, row._rowIndex, { status: 'cancelled' });
     invalidateSheetCache(SHEETS.RESERVATIONS);
@@ -495,28 +496,42 @@ function handleBoothLogin(params) {
   return booth;
 }
 
+function assertNoCurrentConsultation(boothId, reservations) {
+  const states = readSheet(SHEETS.STATE);
+  const state = states.find(s => s.booth_id === boothId);
+  if (!state || !state.current_reservation_id) return;
+
+  const current = (reservations || readSheet(SHEETS.RESERVATIONS))
+    .find(r => r.reservation_id === state.current_reservation_id);
+  const label = current && current.student_id ? ` (${current.student_id})` : '';
+  throw new Error('이미 진행 중인 상담이 있습니다' + label);
+}
+
 function handleCallNext(params) {
   const boothId = String(params.booth_id || '');
   return withLock(() => {
     invalidateSheetCache(SHEETS.RESERVATIONS); // 락 안에서는 항상 최신 데이터로
+    const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
+    const reservations = sheet.rows;
+    assertNoCurrentConsultation(boothId, reservations);
+
     // 이미 calling 상태인 학생이 있으면 그대로 반환(중복 호출 방지)
-    const existingCalling = readSheet(SHEETS.RESERVATIONS).find(r =>
+    const existingCalling = reservations.find(r =>
       r.booth_id === boothId && r.status === 'calling'
     );
     if (existingCalling) return enrichWithStudent(existingCalling);
 
-    const queue = computeQueue(boothId, readSheet(SHEETS.RESERVATIONS));
+    const queue = computeQueue(boothId, reservations);
     if (queue.length === 0) throw new Error('대기 중인 학생이 없습니다');
 
     const next = queue[0];
-    const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
-    const row = sheet.rows.find(r => r.reservation_id === next.reservation_id);
-    updateRowByIndex(SHEETS.RESERVATIONS, row._rowIndex, {
+    const calledAt = nowIso();
+    updateRowByIndex(SHEETS.RESERVATIONS, next._rowIndex, {
       status: 'calling',
-      called_at: nowIso()
+      called_at: calledAt
     });
     invalidateSheetCache(SHEETS.RESERVATIONS);
-    return enrichWithStudent({ ...next, status: 'calling', called_at: nowIso() });
+    return enrichWithStudent({ ...next, status: 'calling', called_at: calledAt });
   });
 }
 
@@ -553,7 +568,14 @@ function handleManualScan(params) {
 // QR 스캔 / 수동 입력에서 공통으로 호출. 호출자가 lock 안에서 실행해야 함.
 function startConsultationForStudent(boothId, stu) {
   const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
-  const candidates = sheet.rows.filter(r =>
+  const reservations = sheet.rows;
+  assertNoCurrentConsultation(boothId, reservations);
+
+  const boothCalling = reservations.find(r =>
+    r.booth_id === boothId && r.status === 'calling'
+  );
+
+  const candidates = reservations.filter(r =>
     String(r.student_id) === String(stu.student_id) &&
     r.booth_id === boothId &&
     ['calling', 'waiting'].indexOf(r.status) !== -1
@@ -561,7 +583,10 @@ function startConsultationForStudent(boothId, stu) {
   if (candidates.length === 0) {
     throw new Error(`${stu.name} 학생은 본 부스에 예약이 없습니다 (부스: ${boothId})`);
   }
-  const target = candidates.find(r => r.status === 'calling') || candidates[0];
+  if (boothCalling && String(boothCalling.student_id) !== String(stu.student_id)) {
+    throw new Error('현재 호출된 학생부터 상담 시작 또는 노쇼 처리해 주세요');
+  }
+  const target = boothCalling || candidates[0];
   const startedAt = nowIso();
 
   updateRowByIndex(SHEETS.RESERVATIONS, target._rowIndex, {
@@ -656,6 +681,7 @@ function handleSkipNoShow(params) {
   const boothId = String(params.booth_id || '');
   return withLock(() => {
     const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
+    assertNoCurrentConsultation(boothId, sheet.rows);
     const callingRow = sheet.rows.find(r => r.booth_id === boothId && r.status === 'calling');
     if (!callingRow) throw new Error('호출 중인 학생이 없습니다');
 

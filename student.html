@@ -224,6 +224,16 @@ function showLoader(on) {
   document.getElementById('loader').classList.toggle('hidden', !on);
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
 function toast(msg, kind) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -413,10 +423,10 @@ async function showReserve() {
         const gradeLabel = grade === 0 ? '전체' : grade + '학년 담당';
         card.innerHTML = `
           <div>
-            <div class="font-semibold">${b.subject_group}</div>
-            <div class="text-xs text-slate-500 mt-0.5">${gradeLabel} · ${b.room || b.booth_id}</div>
+            <div class="font-semibold">${escapeHtml(b.subject_group)}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(gradeLabel)} · ${escapeHtml(b.room || b.booth_id)}</div>
           </div>
-          <div class="text-xs ${disabled ? 'text-slate-400' : 'text-indigo-600'}">${reasonLabel}</div>
+          <div class="text-xs ${disabled ? 'text-slate-400' : 'text-indigo-600'}">${escapeHtml(reasonLabel)}</div>
         `;
         card.addEventListener('click', () => onBoothClick(b, isPreReg));
         list.appendChild(card);
@@ -535,13 +545,13 @@ async function refreshStatus() {
       card.innerHTML = `
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0">
-            <div class="font-semibold">${r.subject_group} <span class="text-xs text-slate-500 font-normal">(${gradeLabel})</span></div>
-            <div class="text-xs text-slate-500 mt-0.5">${b.room || ''} · ${r.block}블록 · ${r.type === 'reserved' ? '사전예약' : '당일추가'}</div>
+            <div class="font-semibold">${escapeHtml(r.subject_group)} <span class="text-xs text-slate-500 font-normal">(${escapeHtml(gradeLabel)})</span></div>
+            <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(b.room || '')} · ${escapeHtml(r.block)}블록 · ${r.type === 'reserved' ? '사전예약' : '당일추가'}</div>
           </div>
-          <div class="text-sm font-semibold whitespace-nowrap">${badge}</div>
+          <div class="text-sm font-semibold whitespace-nowrap">${escapeHtml(badge)}</div>
         </div>
         ${r.status === 'calling' ? '<div class="mt-3 text-sm text-amber-800 font-medium">⚡ 즉시 부스로 이동하여 QR을 보여주세요</div>' : ''}
-        ${r.status === 'waiting' ? `<button data-rid="${r.reservation_id}" class="cancel-btn mt-3 text-xs text-red-600 px-2 py-1 border border-red-200 rounded">예약 취소</button>` : ''}
+        ${r.status === 'waiting' ? `<button data-rid="${escapeHtml(r.reservation_id)}" class="cancel-btn mt-3 text-xs text-red-600 px-2 py-1 border border-red-200 rounded">예약 취소</button>` : ''}
       `;
       el.appendChild(card);
     });

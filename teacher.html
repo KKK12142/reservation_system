@@ -208,6 +208,16 @@ function showLoader(on) {
   document.getElementById('loader').classList.toggle('hidden', !on);
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
 function toast(msg, kind) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -271,15 +281,15 @@ async function loadBoothOptions() {
         btn.className = 'w-full text-left p-3 border rounded-lg hover:bg-slate-50 active:bg-slate-100';
         const grade = Number(b.target_grade);
         btn.innerHTML = `
-          <div class="font-medium">${b.subject_group} <span class="text-sm text-slate-500 font-normal">${grade === 0 ? '· 전체' : '· ' + grade + '학년'}</span></div>
-          <div class="text-xs text-slate-500">${b.booth_id} · ${b.room || ''}</div>
+          <div class="font-medium">${escapeHtml(b.subject_group)} <span class="text-sm text-slate-500 font-normal">${grade === 0 ? '· 전체' : '· ' + grade + '학년'}</span></div>
+          <div class="text-xs text-slate-500">${escapeHtml(b.booth_id)} · ${escapeHtml(b.room || '')}</div>
         `;
         btn.addEventListener('click', () => loginAs(b.booth_id));
         container.appendChild(btn);
       });
     });
   } catch (err) {
-    container.innerHTML = `<div class="text-sm text-red-600 py-4 text-center">${err.message}</div>`;
+    container.innerHTML = `<div class="text-sm text-red-600 py-4 text-center">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -413,8 +423,8 @@ function renderQueue(data) {
         <div class="flex items-center gap-3">
           <div class="w-7 h-7 rounded-full bg-slate-700 text-white text-sm font-semibold flex items-center justify-center">${i + 1}</div>
           <div>
-            <div class="font-medium">${r.student_grade}-${r.student_class_no}-${r.student_number} ${r.student_name}</div>
-            <div class="text-xs text-slate-500">${r.block}블록 · ${isReserved ? '사전예약' : '당일추가'}</div>
+            <div class="font-medium">${escapeHtml(r.student_grade)}-${escapeHtml(r.student_class_no)}-${escapeHtml(r.student_number)} ${escapeHtml(r.student_name)}</div>
+            <div class="text-xs text-slate-500">${escapeHtml(r.block)}블록 · ${isReserved ? '사전예약' : '당일추가'}</div>
           </div>
         </div>
         <div class="text-xs ${isReserved ? 'text-indigo-700' : 'text-emerald-700'} font-medium">${isReserved ? '사전' : '당일'}</div>

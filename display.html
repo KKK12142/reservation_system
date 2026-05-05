@@ -89,6 +89,16 @@ function callApi(action, params) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
 // ===== 시계 =====
 function startClock() {
   const update = () => {
@@ -230,10 +240,10 @@ function renderCard(b) {
   const headerHtml = `
     <div class="flex items-center justify-between mb-2 pb-2 border-b border-white/10">
       <div>
-        <div class="text-xl md:text-2xl font-bold leading-tight">${b.subject_group}</div>
-        <div class="text-xs md:text-sm text-slate-400">${gradeLabel} · ${b.room || b.booth_id}</div>
+        <div class="text-xl md:text-2xl font-bold leading-tight">${escapeHtml(b.subject_group)}</div>
+        <div class="text-xs md:text-sm text-slate-400">${escapeHtml(gradeLabel)} · ${escapeHtml(b.room || b.booth_id)}</div>
       </div>
-      <div class="text-xs md:text-sm font-semibold whitespace-nowrap">${stateLabel}</div>
+      <div class="text-xs md:text-sm font-semibold whitespace-nowrap">${escapeHtml(stateLabel)}</div>
     </div>
   `;
 
@@ -242,9 +252,9 @@ function renderCard(b) {
   if (b.current || b.calling) {
     bodyHtml = `
       <div class="min-h-[80px]">
-        <div class="text-2xl md:text-3xl font-bold mb-0.5 leading-tight">${primaryName}</div>
-        <div class="text-sm md:text-base text-slate-300">${primaryClass}</div>
-        ${primaryNote ? `<div class="text-xs md:text-sm font-semibold text-amber-300 mt-1">${primaryNote}</div>` : ''}
+        <div class="text-2xl md:text-3xl font-bold mb-0.5 leading-tight">${escapeHtml(primaryName)}</div>
+        <div class="text-sm md:text-base text-slate-300">${escapeHtml(primaryClass)}</div>
+        ${primaryNote ? `<div class="text-xs md:text-sm font-semibold text-amber-300 mt-1">${escapeHtml(primaryNote)}</div>` : ''}
       </div>
     `;
   } else {
@@ -260,8 +270,8 @@ function renderCard(b) {
       slotsHtml.push(`
         <div class="flex items-center justify-between gap-2 px-2 py-1 rounded ${n.type === 'reserved' ? 'bg-indigo-900/30' : 'bg-emerald-900/30'}">
           <div class="min-w-0 flex-1">
-            <div class="text-base md:text-lg font-semibold truncate leading-tight">${n.name}</div>
-            <div class="text-xs text-slate-400 leading-tight">${n.grade_class}</div>
+            <div class="text-base md:text-lg font-semibold truncate leading-tight">${escapeHtml(n.name)}</div>
+            <div class="text-xs text-slate-400 leading-tight">${escapeHtml(n.grade_class)}</div>
           </div>
           <div class="text-xs ${n.type === 'reserved' ? 'text-indigo-300' : 'text-emerald-300'} flex-shrink-0 font-semibold">${n.type === 'reserved' ? '사전' : '당일'}</div>
         </div>
