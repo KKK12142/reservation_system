@@ -658,11 +658,24 @@ function handleSkipNoShow(params) {
     const sheet = readSheetWithRowIndex(SHEETS.RESERVATIONS);
     const callingRow = sheet.rows.find(r => r.booth_id === boothId && r.status === 'calling');
     if (!callingRow) throw new Error('호출 중인 학생이 없습니다');
-    // 대기열 끝으로: status를 waiting으로 되돌리고 created_at을 현재로 갱신
+
+    // 노쇼 → 대기열 진짜 끝으로 이동.
+    // 큐 정렬은 block ASC → type(reserved 우선) → created_at ASC. 셋 다 손봐야 끝으로 감:
+    //   1) block: 현재 블록으로 갱신해야 지난 블록의 높은 우선순위를 잃음
+    //   2) type:  walkin으로 바꿔 같은 블록 사전예약자보다 뒤로
+    //   3) created_at: now로 갱신해 같은 조건 내에서도 마지막
+    // 이걸 안 하면 "block=1 사전예약자가 노쇼 후에도 계속 1번으로 호출되는" 버그 발생.
+    const currentBlock = getCurrentBlock();
+    const newBlock = (currentBlock >= 1 && currentBlock <= 6)
+      ? currentBlock
+      : Number(callingRow.block);
+
     updateRowByIndex(SHEETS.RESERVATIONS, callingRow._rowIndex, {
       status: 'waiting',
       called_at: '',
-      created_at: nowIso()
+      created_at: nowIso(),
+      block: newBlock,
+      type: 'walkin'
     });
     invalidateSheetCache(SHEETS.RESERVATIONS);
     return { ok: true, reservation_id: callingRow.reservation_id };
