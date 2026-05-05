@@ -71,6 +71,10 @@ function parseParams(e) {
 }
 
 function dispatch(action, params) {
+  // 학번 자동 정규화 (앞자리 0 보존)
+  if (params && params.student_id !== undefined && params.student_id !== '') {
+    params.student_id = normalizeStudentId(params.student_id);
+  }
   const handlers = {
     // 공용
     'ping':                () => ({ now: nowIso(), block: getCurrentBlock() }),
@@ -129,6 +133,15 @@ function isTrue(v) {
   return String(v).toUpperCase() === 'TRUE' || v === true;
 }
 
+// 학번 6자리 정규화: 앞자리 0이 시트에서 떨어져나가는 문제 방어.
+// "20405" → "020405", 20405(number) → "020405", "020405" → "020405"
+function normalizeStudentId(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) return s.padStart(6, '0');
+  return s; // 숫자가 아니면 그대로 (안전장치)
+}
+
 // ===== 시트 헬퍼 =====
 function ss() { return SpreadsheetApp.getActiveSpreadsheet(); }
 
@@ -149,7 +162,14 @@ function readSheetWithRowIndex(name) {
   const headers = data[0];
   const rows = data.slice(1).map((row, i) => {
     const obj = { _rowIndex: i + 2 };
-    headers.forEach((h, idx) => obj[h] = row[idx]);
+    headers.forEach((h, idx) => {
+      let v = row[idx];
+      // 학번 컬럼은 항상 6자리 텍스트로 정규화
+      if ((h === 'student_id' || h === 'current_student_id') && v !== '' && v !== null && v !== undefined) {
+        v = normalizeStudentId(v);
+      }
+      obj[h] = v;
+    });
     return obj;
   });
   return { headers, rows };
@@ -505,9 +525,10 @@ function handleScanQR(params) {
   return withLock(() => {
     const parts = payload.split(':');
     if (parts.length !== 3 || parts[0] !== 'STU') throw new Error('QR 형식이 올바르지 않습니다');
-    const [, scannedSid, scannedToken] = parts;
+    const scannedSid = normalizeStudentId(parts[1]);
+    const scannedToken = parts[2];
 
-    const stu = readSheet(SHEETS.STUDENTS).find(s => String(s.student_id) === String(scannedSid));
+    const stu = readSheet(SHEETS.STUDENTS).find(s => String(s.student_id) === scannedSid);
     if (!stu) throw new Error('등록되지 않은 학생입니다');
     if (stu.qr_token !== scannedToken) throw new Error('QR 검증 실패 — 본인 QR이 맞는지 확인해 주세요');
 
@@ -792,6 +813,19 @@ function setupSheets() {
     s.setFrozenRows(1);
   });
 
+  // 학번 컬럼은 텍스트 포맷(@)으로: 앞자리 0이 사라지는 것 방지
+  const idColumnsBySheet = {
+    students: 'student_id',
+    reservations: 'student_id',
+    consultation_log: 'student_id',
+    current_state: 'current_student_id'
+  };
+  Object.keys(idColumnsBySheet).forEach(sheetName => {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    const colIdx = schemas[sheetName].indexOf(idColumnsBySheet[sheetName]) + 1;
+    if (colIdx > 0) sheet.getRange(1, colIdx, sheet.getMaxRows(), 1).setNumberFormat('@');
+  });
+
   // config 시드
   const configSheet = spreadsheet.getSheetByName('config');
   if (configSheet.getLastRow() < 2) {
@@ -828,6 +862,37 @@ function setupSheets() {
  * 학생 명단 일괄 업로드 시 호출 (선택) — students 시트에 학번/이름/학년/반/번호 입력 후
  * 이 함수를 한 번 실행하면 qr_token이 비어있는 행을 모두 자동 채워줌.
  */
+/**
+ * 기존 시트의 학번 값들을 6자리 텍스트로 일괄 보정.
+ * setupSheets로 컬럼 포맷이 바뀌어도 기존에 숫자로 저장된 값은 그대로라 한 번 실행 필요.
+ * Apps Script 에디터에서 직접 실행.
+ */
+function migrateNormalizeStudentIds() {
+  const spreadsheet = ss();
+  const targets = [
+    { sheet: 'students', col: 'student_id' },
+    { sheet: 'reservations', col: 'student_id' },
+    { sheet: 'consultation_log', col: 'student_id' },
+    { sheet: 'current_state', col: 'current_student_id' }
+  ];
+  let totalFixed = 0;
+  targets.forEach(t => {
+    const sheet = spreadsheet.getSheetByName(t.sheet);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const colIdx = headers.indexOf(t.col);
+    if (colIdx === -1) return;
+    const range = sheet.getRange(2, colIdx + 1, sheet.getLastRow() - 1, 1);
+    range.setNumberFormat('@'); // 먼저 텍스트 포맷 강제
+    const values = range.getValues();
+    const fixed = values.map(([v]) => [normalizeStudentId(v)]);
+    range.setValues(fixed);
+    totalFixed += fixed.filter(([v]) => v).length;
+    invalidateSheetCache(t.sheet);
+  });
+  return { ok: true, total_processed: totalFixed };
+}
+
 function backfillQrTokens() {
   const sheet = readSheetWithRowIndex(SHEETS.STUDENTS);
   let count = 0;
