@@ -166,6 +166,18 @@
   </div>
 </div>
 
+<!-- 커스텀 확인 모달 -->
+<div id="confirm-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-40 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm p-5">
+    <div id="confirm-title" class="text-base font-semibold mb-2"></div>
+    <div id="confirm-message" class="text-sm text-slate-600 mb-5 leading-relaxed"></div>
+    <div class="flex gap-2">
+      <button id="confirm-cancel" class="flex-1 py-2.5 border rounded-lg text-slate-600">취소</button>
+      <button id="confirm-ok" class="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg font-semibold">확인</button>
+    </div>
+  </div>
+</div>
+
 <!-- 로딩/토스트 -->
 <div id="loader" class="hidden fixed inset-0 bg-black/30 flex items-center justify-center z-50">
   <div class="bg-white rounded-lg px-6 py-4 text-sm">처리 중...</div>
@@ -221,6 +233,34 @@ function toast(msg, kind) {
   t.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white text-sm px-4 py-2 rounded-lg max-w-xs text-center ${bg}`;
   if (state.toastTimer) clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+// 커스텀 확인 모달 — 브라우저 기본 confirm()이 도메인을 노출시켜서 대체
+function customConfirm({ title = '확인', message, okText = '확인', cancelText = '취소', danger = false }) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    const modal = document.getElementById('confirm-modal');
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    okBtn.className = `flex-1 py-2.5 rounded-lg font-semibold text-white ${danger ? 'bg-red-600' : 'bg-indigo-600'}`;
+    modal.classList.remove('hidden');
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => { if (e.target === modal) cleanup(false); };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+  });
 }
 
 // ===== 로그인/로그아웃 =====
@@ -394,7 +434,12 @@ async function confirmAndCreate(booth, block) {
   const grade = Number(booth.target_grade);
   const gradeLabel = grade === 0 ? '' : `${grade}학년 담당 `;
   const blockLabel = block ? ` (${block}블록 희망)` : '';
-  if (!confirm(`${booth.subject_group} ${gradeLabel}부스에 예약하시겠습니까?${blockLabel}`)) return;
+  const ok = await customConfirm({
+    title: '예약 확정',
+    message: `${booth.subject_group} ${gradeLabel}부스에 예약하시겠습니까?${blockLabel}`,
+    okText: '예약하기'
+  });
+  if (!ok) return;
   showLoader(true);
   try {
     await callApi('createReservation', {
@@ -479,7 +524,14 @@ async function refreshStatus() {
 }
 
 async function cancelReservation(rid) {
-  if (!confirm('정말 예약을 취소하시겠습니까?')) return;
+  const ok = await customConfirm({
+    title: '예약 취소',
+    message: '정말 예약을 취소하시겠습니까? 취소 후에는 다시 같은 부스에 신청해야 합니다.',
+    okText: '취소하기',
+    cancelText: '돌아가기',
+    danger: true
+  });
+  if (!ok) return;
   showLoader(true);
   try {
     await callApi('cancelReservation', { reservation_id: rid, student_id: state.student.student_id });
