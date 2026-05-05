@@ -35,6 +35,7 @@ function doGet(e) {
     const t = HtmlService.createTemplateFromFile(page);
     t.appUrl = ScriptApp.getService().getUrl();
     t.boothId = params.booth_id || '';
+    t.grade = params.grade || '';
     return t.evaluate()
       .addMetaTag('viewport', 'width=device-width, initial-scale=1, user-scalable=no')
       .setTitle('부여여고 박람회 상담 시스템')
