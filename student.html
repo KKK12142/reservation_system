@@ -36,9 +36,11 @@
     </div>
     <div class="bg-white rounded-2xl shadow-sm p-5 space-y-3">
       <div>
-        <label class="block text-sm text-slate-600 mb-1">학번</label>
+        <label class="block text-sm text-slate-600 mb-1">학번 (6자리)</label>
         <input id="login-id" type="text" inputmode="numeric" autocomplete="off"
-          class="w-full border rounded-lg px-3 py-3" placeholder="예: 20245">
+          maxlength="6" pattern="[0-9]{6}"
+          class="w-full border rounded-lg px-3 py-3 tracking-widest" placeholder="010215">
+        <div class="text-xs text-slate-400 mt-1">학년(2) + 반(2) + 번호(2) — 예: 1학년 2반 15번 → 010215</div>
       </div>
       <div>
         <label class="block text-sm text-slate-600 mb-1">이름</label>
@@ -176,8 +178,11 @@ const state = {
   pollTimer: null,
   qrInstance: null,
   toastTimer: null,
-  pendingBooth: null
+  pendingBooth: null,
+  lastQueueV: '',
+  currentView: 'login'
 };
+const POLL_INTERVAL_MS = 5000;
 
 // ===== API 래퍼 =====
 function callApi(action, params) {
@@ -198,6 +203,7 @@ function show(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(view + '-view').classList.add('active');
   document.getElementById('header').classList.toggle('hidden', view === 'login');
+  state.currentView = view;
   if (view !== 'status') stopStatusPoll();
   window.scrollTo(0, 0);
 }
@@ -408,17 +414,26 @@ async function confirmAndCreate(booth, block) {
 // ===== 현황 =====
 async function showStatus() {
   show('status');
+  state.lastQueueV = ''; // 화면 진입 시 무조건 1회 강제 갱신
   await refreshStatus();
   startStatusPoll();
 }
 
 async function refreshStatus() {
   try {
-    const list = await callApi('getMyQueueStatus', { student_id: state.student.student_id });
+    const result = await callApi('getMyQueueStatus', {
+      student_id: state.student.student_id,
+      last_v: state.lastQueueV || ''
+    });
+    // 변화 없으면 DOM 안 건드림
+    if (result && result.unchanged) return;
+    state.lastQueueV = result._v || '';
+    const list = result.items || [];
+
     const el = document.getElementById('status-list');
     const empty = document.getElementById('status-empty');
     el.innerHTML = '';
-    if (!list || list.length === 0) {
+    if (list.length === 0) {
       empty.classList.remove('hidden');
       return;
     }
@@ -479,7 +494,8 @@ async function cancelReservation(rid) {
 
 function startStatusPoll() {
   stopStatusPoll();
-  state.pollTimer = setInterval(refreshStatus, 10000);
+  if (document.hidden) return; // 숨겨진 탭이면 시작 안 함
+  state.pollTimer = setInterval(refreshStatus, POLL_INTERVAL_MS);
 }
 function stopStatusPoll() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
@@ -518,6 +534,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('picker-cancel').addEventListener('click', () => {
     document.getElementById('block-picker').classList.add('hidden');
     state.pendingBooth = null;
+  });
+
+  // 백그라운드 탭에서는 폴링 정지, 다시 보일 때 재개
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopStatusPoll();
+    } else if (state.currentView === 'status' && state.student) {
+      refreshStatus();
+      startStatusPoll();
+    }
   });
 
   // 세션 복원

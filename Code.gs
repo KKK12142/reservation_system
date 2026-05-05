@@ -74,7 +74,7 @@ function dispatch(action, params) {
   const handlers = {
     // 공용
     'ping':                () => ({ now: nowIso(), block: getCurrentBlock() }),
-    'getBooths':           () => readSheet(SHEETS.BOOTHS).filter(b => isTrue(b.active)),
+    'getBooths':           () => readSheetCached(SHEETS.BOOTHS).filter(b => isTrue(b.active)),
     'getCurrentBlock':     () => ({ block: getCurrentBlock() }),
 
     // 학생용
@@ -94,7 +94,7 @@ function dispatch(action, params) {
     'getBoothQueue':       () => handleGetBoothQueue(params),
 
     // 전광판
-    'getDashboard':        () => handleGetDashboard(),
+    'getDashboard':        () => handleGetDashboard(params),
 
     // 셋업/관리
     'setup':               () => setupSheets()
@@ -169,9 +169,48 @@ function updateRowByIndex(sheetName, rowIndex, updates) {
   });
 }
 
+// ===== 캐시 (CacheService) =====
+// 핵심 목적: 200명 동시 폴링/로그인 시 시트 풀 읽기 횟수를 줄임.
+// TTL이 짧은 시트는 쓰기 직후 invalidateSheetCache로 즉시 무효화.
+const CACHE_TTL = {
+  students: 60,
+  booths: 60,
+  config: 30,
+  reservations: 3,
+  current_state: 2,
+  consultation_log: 5,
+  blocks: 300
+};
+
+function readSheetCached(name) {
+  const cache = CacheService.getScriptCache();
+  const key = 'sheet:' + name;
+  const cached = cache.get(key);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (_) { /* 손상 시 fall-through */ }
+  }
+  const data = readSheet(name);
+  const json = JSON.stringify(data);
+  // CacheService put 한도는 100KB. 이를 넘으면 캐시 안 함.
+  if (json.length < 95000) {
+    cache.put(key, json, CACHE_TTL[name] || 5);
+  }
+  return data;
+}
+
+function invalidateSheetCache(name) {
+  CacheService.getScriptCache().remove('sheet:' + name);
+}
+
+function objectHash(obj) {
+  const s = JSON.stringify(obj);
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s);
+  return digest.slice(0, 6).map(b => ((b & 0xff) + 0x100).toString(16).slice(1)).join('');
+}
+
 // ===== 설정/시간 =====
 function getConfig() {
-  const rows = readSheet(SHEETS.CONFIG);
+  const rows = readSheetCached(SHEETS.CONFIG);
   const c = {};
   rows.forEach(r => c[r.key] = r.value);
   return c;
@@ -214,16 +253,30 @@ function handleLogin(params) {
   const name = String(params.name || '').trim();
   if (!sid || !name) throw new Error('학번과 이름을 모두 입력해 주세요');
 
-  const sheet = readSheetWithRowIndex(SHEETS.STUDENTS);
-  const row = sheet.rows.find(r => String(r.student_id) === sid && String(r.name).trim() === name);
-  if (!row) throw new Error('학번 또는 이름이 일치하지 않습니다');
+  // 캐시 우선: 200명 동시 로그인 시 첫 1명만 시트를 읽고 나머지는 캐시 hit
+  const students = readSheetCached(SHEETS.STUDENTS);
+  const found = students.find(r => String(r.student_id) === sid && String(r.name).trim() === name);
+  if (!found) throw new Error('학번 또는 이름이 일치하지 않습니다');
 
-  // 토큰이 비어 있으면 즉시 채워줌(시트에 누락 시 안전장치)
-  if (!row.qr_token) {
-    const token = generateQrToken(row.student_id);
-    updateRowByIndex(SHEETS.STUDENTS, row._rowIndex, { qr_token: token });
-    row.qr_token = token;
+  // 토큰이 비어 있을 때만 안전장치(행사 전 backfillQrTokens 권장)
+  if (!found.qr_token) {
+    return withLock(() => {
+      const sheet = readSheetWithRowIndex(SHEETS.STUDENTS);
+      const row = sheet.rows.find(r => String(r.student_id) === sid);
+      if (!row) throw new Error('학생을 찾을 수 없습니다');
+      if (!row.qr_token) {
+        const token = generateQrToken(row.student_id);
+        updateRowByIndex(SHEETS.STUDENTS, row._rowIndex, { qr_token: token });
+        row.qr_token = token;
+      }
+      invalidateSheetCache(SHEETS.STUDENTS);
+      return toLoginResponse(row);
+    });
   }
+  return toLoginResponse(found);
+}
+
+function toLoginResponse(row) {
   return {
     student_id: String(row.student_id),
     name: row.name,
@@ -236,7 +289,7 @@ function handleLogin(params) {
 
 function handleGetMyQR(params) {
   const sid = String(params.student_id || '');
-  const stu = readSheet(SHEETS.STUDENTS).find(s => String(s.student_id) === sid);
+  const stu = readSheetCached(SHEETS.STUDENTS).find(s => String(s.student_id) === sid);
   if (!stu) throw new Error('학생을 찾을 수 없습니다');
   return {
     student_id: String(stu.student_id),
@@ -247,8 +300,8 @@ function handleGetMyQR(params) {
 
 function handleGetMyReservations(params) {
   const sid = String(params.student_id || '');
-  const all = readSheet(SHEETS.RESERVATIONS).filter(r => String(r.student_id) === sid);
-  const booths = readSheet(SHEETS.BOOTHS);
+  const all = readSheetCached(SHEETS.RESERVATIONS).filter(r => String(r.student_id) === sid);
+  const booths = readSheetCached(SHEETS.BOOTHS);
   return all.map(r => {
     const b = booths.find(x => x.booth_id === r.booth_id);
     return {
@@ -319,6 +372,7 @@ function handleCreateReservation(params) {
       called_at: ''
     };
     appendRow(SHEETS.RESERVATIONS, reservation);
+    invalidateSheetCache(SHEETS.RESERVATIONS);
     return reservation;
   });
 }
@@ -335,19 +389,23 @@ function handleCancelReservation(params) {
       throw new Error('이미 진행 중이거나 완료된 예약은 취소할 수 없습니다');
     }
     updateRowByIndex(SHEETS.RESERVATIONS, row._rowIndex, { status: 'cancelled' });
+    invalidateSheetCache(SHEETS.RESERVATIONS);
     return { ok: true };
   });
 }
 
 function handleGetMyQueueStatus(params) {
   const sid = String(params.student_id || '');
-  const reservations = readSheet(SHEETS.RESERVATIONS);
+  const lastV = String(params.last_v || '');
+
+  const reservations = readSheetCached(SHEETS.RESERVATIONS);
+  const booths = readSheetCached(SHEETS.BOOTHS);
+
   const myActive = reservations.filter(r =>
     String(r.student_id) === sid && ACTIVE_STATUS.indexOf(r.status) !== -1
   );
-  const booths = readSheet(SHEETS.BOOTHS);
 
-  return myActive.map(r => {
+  const items = myActive.map(r => {
     const booth = booths.find(b => b.booth_id === r.booth_id);
     if (r.status === 'in_progress') {
       return { reservation: r, booth, position: 0, ahead_count: 0, status_label: '상담 중' };
@@ -355,7 +413,7 @@ function handleGetMyQueueStatus(params) {
     if (r.status === 'calling') {
       return { reservation: r, booth, position: 0, ahead_count: 0, status_label: '본인 호출됨 — 즉시 이동' };
     }
-    const queue = computeQueue(r.booth_id);
+    const queue = computeQueue(r.booth_id, reservations);
     const idx = queue.findIndex(q => q.reservation_id === r.reservation_id);
     return {
       reservation: r,
@@ -365,11 +423,16 @@ function handleGetMyQueueStatus(params) {
       status_label: idx === 0 ? '곧 호출됩니다' : `앞에 ${idx}명 대기 중`
     };
   });
+
+  const v = objectHash(items);
+  if (lastV && lastV === v) return { unchanged: true, _v: v };
+  return { items, _v: v };
 }
 
-// 부스의 대기열을 정렬하여 반환 (waiting만)
-function computeQueue(boothId) {
-  return readSheet(SHEETS.RESERVATIONS)
+// 부스의 대기열을 정렬하여 반환 (waiting만). reservations를 인자로 받으면 재사용.
+function computeQueue(boothId, reservationsCache) {
+  const rows = reservationsCache || readSheetCached(SHEETS.RESERVATIONS);
+  return rows
     .filter(r => r.booth_id === boothId && r.status === 'waiting')
     .sort((a, b) => {
       if (a.block !== b.block) return Number(a.block) - Number(b.block);
@@ -390,13 +453,14 @@ function handleBoothLogin(params) {
 function handleCallNext(params) {
   const boothId = String(params.booth_id || '');
   return withLock(() => {
+    invalidateSheetCache(SHEETS.RESERVATIONS); // 락 안에서는 항상 최신 데이터로
     // 이미 calling 상태인 학생이 있으면 그대로 반환(중복 호출 방지)
     const existingCalling = readSheet(SHEETS.RESERVATIONS).find(r =>
       r.booth_id === boothId && r.status === 'calling'
     );
     if (existingCalling) return enrichWithStudent(existingCalling);
 
-    const queue = computeQueue(boothId);
+    const queue = computeQueue(boothId, readSheet(SHEETS.RESERVATIONS));
     if (queue.length === 0) throw new Error('대기 중인 학생이 없습니다');
 
     const next = queue[0];
@@ -406,6 +470,7 @@ function handleCallNext(params) {
       status: 'calling',
       called_at: nowIso()
     });
+    invalidateSheetCache(SHEETS.RESERVATIONS);
     return enrichWithStudent({ ...next, status: 'calling', called_at: nowIso() });
   });
 }
@@ -462,6 +527,10 @@ function handleScanQR(params) {
       updated_at: startedAt
     });
 
+    invalidateSheetCache(SHEETS.RESERVATIONS);
+    invalidateSheetCache(SHEETS.STATE);
+    invalidateSheetCache(SHEETS.LOG);
+
     return {
       student: {
         student_id: String(stu.student_id),
@@ -514,6 +583,10 @@ function handleCompleteConsultation(params) {
       updated_at: endedAt
     });
 
+    invalidateSheetCache(SHEETS.RESERVATIONS);
+    invalidateSheetCache(SHEETS.STATE);
+    invalidateSheetCache(SHEETS.LOG);
+
     return { ok: true, ended_at: endedAt, reservation_id: reservationId };
   });
 }
@@ -530,38 +603,46 @@ function handleSkipNoShow(params) {
       called_at: '',
       created_at: nowIso()
     });
+    invalidateSheetCache(SHEETS.RESERVATIONS);
     return { ok: true, reservation_id: callingRow.reservation_id };
   });
 }
 
 function handleGetBoothQueue(params) {
   const boothId = String(params.booth_id || '');
-  const queue = computeQueue(boothId);
+  const lastV = String(params.last_v || '');
+
+  const reservations = readSheetCached(SHEETS.RESERVATIONS);
+  const states = readSheetCached(SHEETS.STATE);
+
+  const queue = computeQueue(boothId, reservations);
   const enrichedQueue = queue.map(enrichWithStudent);
 
-  const states = readSheet(SHEETS.STATE);
   const state = states.find(s => s.booth_id === boothId);
   let current = null;
   if (state && state.current_reservation_id) {
-    const r = readSheet(SHEETS.RESERVATIONS).find(x => x.reservation_id === state.current_reservation_id);
+    const r = reservations.find(x => x.reservation_id === state.current_reservation_id);
     if (r) current = { ...enrichWithStudent(r), started_at: state.current_started_at };
   }
 
-  const calling = readSheet(SHEETS.RESERVATIONS).find(r =>
+  const calling = reservations.find(r =>
     r.booth_id === boothId && r.status === 'calling'
   );
 
-  return {
+  const payload = {
     booth_id: boothId,
     current,
     calling: calling ? enrichWithStudent(calling) : null,
     queue: enrichedQueue,
     queue_count: enrichedQueue.length
   };
+  const v = objectHash(payload);
+  if (lastV && lastV === v) return { unchanged: true, _v: v };
+  return Object.assign(payload, { _v: v });
 }
 
 function enrichWithStudent(reservation) {
-  const stu = readSheet(SHEETS.STUDENTS).find(s => String(s.student_id) === String(reservation.student_id));
+  const stu = readSheetCached(SHEETS.STUDENTS).find(s => String(s.student_id) === String(reservation.student_id));
   if (!stu) return { ...reservation, _rowIndex: undefined };
   return {
     ...reservation,
@@ -585,11 +666,12 @@ function upsertCurrentState(boothId, updates) {
 }
 
 // ===== 전광판 =====
-function handleGetDashboard() {
-  const booths = readSheet(SHEETS.BOOTHS).filter(b => isTrue(b.active));
-  const reservations = readSheet(SHEETS.RESERVATIONS);
-  const students = readSheet(SHEETS.STUDENTS);
-  const states = readSheet(SHEETS.STATE);
+function handleGetDashboard(params) {
+  const lastV = params && params.last_v ? String(params.last_v) : '';
+  const booths = readSheetCached(SHEETS.BOOTHS).filter(b => isTrue(b.active));
+  const reservations = readSheetCached(SHEETS.RESERVATIONS);
+  const students = readSheetCached(SHEETS.STUDENTS);
+  const states = readSheetCached(SHEETS.STATE);
 
   const stuMap = {};
   students.forEach(s => stuMap[String(s.student_id)] = s);
@@ -622,11 +704,15 @@ function handleGetDashboard() {
     };
   });
 
-  return {
+  const payload = {
     current_block: getCurrentBlock(),
     updated_at: nowIso(),
     booths: result
   };
+  // updated_at은 매 호출마다 변하므로 해시 계산에서 제외
+  const v = objectHash({ booths: result, current_block: payload.current_block });
+  if (lastV && lastV === v) return { unchanged: true, _v: v };
+  return Object.assign(payload, { _v: v });
 }
 
 function maskStudent(s) {
@@ -713,5 +799,6 @@ function backfillQrTokens() {
       count++;
     }
   });
+  invalidateSheetCache(SHEETS.STUDENTS);
   return { backfilled: count };
 }
