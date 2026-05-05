@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>교사 태블릿 — 부여여고 박람회</title>
+<base target="_top">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  .view { display: none; }
+  .view.active { display: block; }
+  #reader { width: 100%; max-width: 480px; margin: 0 auto; }
+  #reader video { border-radius: 12px; }
+  /* html5-qrcode 기본 UI 일부 숨김 */
+  #reader__dashboard_section_csr button { display: none !important; }
+  #reader__dashboard_section_swaplink { display: none !important; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+<div id="app" class="max-w-2xl mx-auto p-4 pb-12">
+
+  <!-- 부스 선택 (URL ?booth_id= 없을 때만) -->
+  <div id="login-view" class="view active">
+    <div class="text-center mt-12 mb-6">
+      <div class="text-2xl font-bold">교사 태블릿</div>
+      <div class="text-sm text-slate-500 mt-1">2026 부여여고 교육과정 박람회</div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm p-5">
+      <div class="text-base font-semibold mb-3">이 태블릿이 운영할 부스를 선택하세요</div>
+      <div id="booth-options" class="space-y-2"></div>
+      <div id="login-error" class="hidden text-sm text-red-600 mt-3"></div>
+    </div>
+  </div>
+
+  <!-- 운영 화면 -->
+  <div id="main-view" class="view">
+    <header class="mb-4 pb-3 border-b border-slate-200 flex items-center justify-between">
+      <div>
+        <div class="text-xs text-slate-500">박람회 상담 부스</div>
+        <div id="header-booth" class="text-lg font-bold"></div>
+      </div>
+      <div class="flex items-center gap-2">
+        <div id="header-block" class="text-xs text-slate-500 px-2 py-1 bg-slate-200 rounded"></div>
+        <button id="logout-btn" class="text-xs text-slate-500 px-2 py-1 border rounded">부스 변경</button>
+      </div>
+    </header>
+
+    <!-- 상태 카드 -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4 min-h-[140px]">
+      <!-- IDLE -->
+      <div id="state-idle" class="state-block">
+        <div class="text-center py-2">
+          <div class="text-slate-400 text-sm mb-1">대기 중</div>
+          <div class="text-xl font-bold mb-1">다음 학생을 호출하세요</div>
+          <div class="text-sm text-slate-500" id="idle-info">대기열을 확인하세요</div>
+        </div>
+      </div>
+      <!-- CALLING -->
+      <div id="state-calling" class="state-block hidden">
+        <div class="bg-amber-50 border-2 border-amber-300 -m-6 p-6 rounded-2xl">
+          <div class="text-amber-700 text-sm font-semibold mb-1">🔔 호출 중 — 학생 도착 대기</div>
+          <div class="text-3xl font-bold mb-1" id="calling-name"></div>
+          <div class="text-sm text-slate-600" id="calling-info"></div>
+          <div class="text-xs text-slate-500 mt-2" id="calling-elapsed"></div>
+        </div>
+      </div>
+      <!-- IN_PROGRESS -->
+      <div id="state-in-progress" class="state-block hidden">
+        <div class="bg-emerald-50 border-2 border-emerald-300 -m-6 p-6 rounded-2xl">
+          <div class="text-emerald-700 text-sm font-semibold mb-1">🟢 상담 중</div>
+          <div class="text-3xl font-bold mb-1" id="progress-name"></div>
+          <div class="text-sm text-slate-600 mb-2" id="progress-info"></div>
+          <div class="text-2xl font-mono font-bold text-emerald-800" id="progress-timer">00:00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 액션 버튼 -->
+    <div id="actions" class="space-y-3 mb-4">
+      <button id="action-call-next" class="w-full bg-indigo-600 text-white py-5 rounded-xl text-xl font-semibold hidden active:scale-[0.98] transition">
+        📢 다음 학생 호출
+      </button>
+      <button id="action-scan" class="w-full bg-emerald-600 text-white py-5 rounded-xl text-xl font-semibold hidden active:scale-[0.98] transition">
+        📷 학생 QR 스캔
+      </button>
+      <button id="action-complete" class="w-full bg-rose-600 text-white py-5 rounded-xl text-xl font-semibold hidden active:scale-[0.98] transition">
+        ✅ 상담 완료
+      </button>
+      <button id="action-no-show" class="w-full bg-slate-200 text-slate-700 py-3 rounded-xl font-medium hidden active:scale-[0.98] transition">
+        노쇼 처리 — 다음 학생으로
+      </button>
+    </div>
+
+    <!-- 대기열 -->
+    <div class="bg-white rounded-2xl shadow-sm p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="font-semibold">대기 명단</div>
+        <div class="text-xs text-slate-500" id="queue-stats">대기 0명</div>
+      </div>
+      <div id="queue-list" class="space-y-2"></div>
+      <div id="queue-empty" class="text-center text-slate-400 py-8 hidden">대기 중인 학생이 없습니다</div>
+    </div>
+  </div>
+</div>
+
+<!-- QR 스캐너 모달 -->
+<div id="scanner-modal" class="hidden fixed inset-0 bg-black z-40 flex flex-col">
+  <div class="flex items-center justify-between p-4 text-white">
+    <div class="text-base font-semibold">학생 QR 스캔</div>
+    <button id="scanner-cancel" class="text-sm border border-white/40 px-3 py-1.5 rounded">취소</button>
+  </div>
+  <div class="flex-1 flex items-center justify-center p-2">
+    <div id="reader" class="rounded-xl overflow-hidden bg-black"></div>
+  </div>
+  <div class="text-center text-white text-sm pb-6 px-4">
+    학생 폰의 QR 코드를 카메라 정중앙에 맞춰 주세요
+  </div>
+</div>
+
+<!-- 커스텀 확인 모달 -->
+<div id="confirm-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-40 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm p-5">
+    <div id="confirm-title" class="text-base font-semibold mb-2"></div>
+    <div id="confirm-message" class="text-sm text-slate-600 mb-5 leading-relaxed"></div>
+    <div class="flex gap-2">
+      <button id="confirm-cancel" class="flex-1 py-2.5 border rounded-lg text-slate-600">취소</button>
+      <button id="confirm-ok" class="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg font-semibold">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 학생 도착 환영 모달 (스캔 성공 시 1.5초) -->
+<div id="welcome-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-3xl p-8 text-center max-w-sm">
+    <div class="text-6xl mb-3">✅</div>
+    <div class="text-2xl font-bold mb-1" id="welcome-name"></div>
+    <div class="text-sm text-slate-500" id="welcome-info"></div>
+    <div class="text-emerald-600 text-sm font-semibold mt-3">상담을 시작합니다</div>
+  </div>
+</div>
+
+<!-- 로딩/토스트 -->
+<div id="loader" class="hidden fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+  <div class="bg-white rounded-lg px-6 py-4 text-sm">처리 중...</div>
+</div>
+<div id="toast" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white text-sm px-4 py-2 rounded-lg max-w-xs text-center"></div>
+
+<script>
+const URL_BOOTH_ID = '<?= boothId ?>';
+const POLL_MS = 5000;
+
+const state = {
+  boothId: '',
+  booth: null,
+  pollTimer: null,
+  toastTimer: null,
+  scanner: null,
+  progressTimer: null,
+  callingTimer: null,
+  startedAt: null,
+  lastQueueV: ''
+};
+
+// ===== API =====
+function callApi(action, params) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error('서버 연결 실패 — 페이지를 새로고침해 주세요'));
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => reject(new Error(err && err.message || String(err))))
+      .api(action, params || {});
+  });
+}
+
+// ===== UI 헬퍼 =====
+function show(view) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(view + '-view').classList.add('active');
+  if (view !== 'main') stopPoll();
+  window.scrollTo(0, 0);
+}
+
+function showLoader(on) {
+  document.getElementById('loader').classList.toggle('hidden', !on);
+}
+
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  let bg = 'bg-slate-900';
+  if (kind === 'error') bg = 'bg-red-600';
+  else if (kind === 'success') bg = 'bg-emerald-600';
+  t.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white text-sm px-4 py-2 rounded-lg max-w-xs text-center ${bg}`;
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+function customConfirm({ title = '확인', message, okText = '확인', cancelText = '취소', danger = false }) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    const modal = document.getElementById('confirm-modal');
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    okBtn.className = `flex-1 py-2.5 rounded-lg font-semibold text-white ${danger ? 'bg-red-600' : 'bg-indigo-600'}`;
+    modal.classList.remove('hidden');
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => { if (e.target === modal) cleanup(false); };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+  });
+}
+
+// ===== 부스 선택 =====
+async function loadBoothOptions() {
+  const container = document.getElementById('booth-options');
+  container.innerHTML = '<div class="text-sm text-slate-400 py-4 text-center">불러오는 중...</div>';
+  try {
+    const booths = await callApi('getBooths', {});
+    container.innerHTML = '';
+    if (booths.length === 0) {
+      container.innerHTML = '<div class="text-sm text-slate-400 py-4 text-center">등록된 부스가 없습니다</div>';
+      return;
+    }
+    const grouped = {};
+    booths.forEach(b => (grouped[b.space] = grouped[b.space] || []).push(b));
+    ['A', 'B', 'C'].forEach(space => {
+      const items = grouped[space];
+      if (!items) return;
+      const header = document.createElement('div');
+      header.className = 'text-xs font-semibold text-slate-500 mt-3 mb-1';
+      header.textContent = space === 'C' ? '공간 C — 학생 멘토 부스' : `공간 ${space}`;
+      container.appendChild(header);
+      items.forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'w-full text-left p-3 border rounded-lg hover:bg-slate-50 active:bg-slate-100';
+        const grade = Number(b.target_grade);
+        btn.innerHTML = `
+          <div class="font-medium">${b.subject_group} <span class="text-sm text-slate-500 font-normal">${grade === 0 ? '· 전체' : '· ' + grade + '학년'}</span></div>
+          <div class="text-xs text-slate-500">${b.booth_id} · ${b.room || ''}</div>
+        `;
+        btn.addEventListener('click', () => loginAs(b.booth_id));
+        container.appendChild(btn);
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="text-sm text-red-600 py-4 text-center">${err.message}</div>`;
+  }
+}
+
+async function loginAs(boothId) {
+  showLoader(true);
+  try {
+    const booth = await callApi('boothLogin', { booth_id: boothId });
+    state.boothId = boothId;
+    state.booth = booth;
+    localStorage.setItem('byh_booth_id', boothId);
+    setHeaderBooth(booth);
+    show('main');
+    refreshQueue();
+    startPoll();
+  } catch (err) {
+    document.getElementById('login-error').textContent = err.message;
+    document.getElementById('login-error').classList.remove('hidden');
+  } finally {
+    showLoader(false);
+  }
+}
+
+function logout() {
+  localStorage.removeItem('byh_booth_id');
+  state.boothId = '';
+  state.booth = null;
+  state.lastQueueV = '';
+  stopPoll();
+  stopProgressTimer();
+  show('login');
+  loadBoothOptions();
+}
+
+function setHeaderBooth(b) {
+  const grade = Number(b.target_grade);
+  const gradeLabel = grade === 0 ? '전체' : grade + '학년';
+  document.getElementById('header-booth').textContent =
+    `${b.subject_group} · ${gradeLabel} (${b.room || b.booth_id})`;
+}
+
+// ===== 상태 갱신 =====
+async function refreshQueue() {
+  try {
+    const result = await callApi('getBoothQueue', {
+      booth_id: state.boothId,
+      last_v: state.lastQueueV || ''
+    });
+    if (result && result.unchanged) return;
+    state.lastQueueV = result._v || '';
+    renderState(result);
+    renderQueue(result);
+
+    // 현재 블록 라벨도 같이 업데이트
+    const blockInfo = await callApi('getCurrentBlock', {});
+    document.getElementById('header-block').textContent =
+      blockInfo.block === 0 ? '사전예약 기간' :
+      blockInfo.block >= 7 ? '종료' :
+      `${blockInfo.block}블록 진행중`;
+  } catch (e) {
+    // 폴링 중 오류는 조용히
+  }
+}
+
+function renderState(data) {
+  const idle = document.getElementById('state-idle');
+  const calling = document.getElementById('state-calling');
+  const inProg = document.getElementById('state-in-progress');
+  const aCall = document.getElementById('action-call-next');
+  const aScan = document.getElementById('action-scan');
+  const aDone = document.getElementById('action-complete');
+  const aNoShow = document.getElementById('action-no-show');
+
+  // 모두 숨김
+  [idle, calling, inProg].forEach(el => el.classList.add('hidden'));
+  [aCall, aScan, aDone, aNoShow].forEach(el => el.classList.add('hidden'));
+
+  if (data.current) {
+    // IN_PROGRESS
+    inProg.classList.remove('hidden');
+    document.getElementById('progress-name').textContent =
+      `${data.current.student_grade}-${data.current.student_class_no}-${data.current.student_number} ${data.current.student_name}`;
+    document.getElementById('progress-info').textContent =
+      `${data.current.subject_group} · ${data.current.block}블록 · ${data.current.type === 'reserved' ? '사전예약' : '당일추가'}`;
+    aDone.classList.remove('hidden');
+    startProgressTimer(data.current.started_at);
+    stopCallingTimer();
+  } else if (data.calling) {
+    // CALLING
+    calling.classList.remove('hidden');
+    document.getElementById('calling-name').textContent =
+      `${data.calling.student_grade}-${data.calling.student_class_no}-${data.calling.student_number} ${data.calling.student_name}`;
+    document.getElementById('calling-info').textContent =
+      `${data.calling.subject_group} · ${data.calling.block}블록 · ${data.calling.type === 'reserved' ? '사전예약' : '당일추가'}`;
+    aScan.classList.remove('hidden');
+    aNoShow.classList.remove('hidden');
+    stopProgressTimer();
+    startCallingTimer(data.calling.called_at);
+  } else {
+    // IDLE
+    idle.classList.remove('hidden');
+    const waitingCount = (data.queue || []).length;
+    document.getElementById('idle-info').textContent =
+      waitingCount === 0 ? '대기 중인 학생이 없습니다' : `대기 ${waitingCount}명`;
+    if (waitingCount > 0) aCall.classList.remove('hidden');
+    aScan.classList.remove('hidden');
+    stopProgressTimer();
+    stopCallingTimer();
+  }
+}
+
+function renderQueue(data) {
+  const list = document.getElementById('queue-list');
+  const empty = document.getElementById('queue-empty');
+  const stats = document.getElementById('queue-stats');
+  const queue = data.queue || [];
+
+  list.innerHTML = '';
+  if (queue.length === 0) {
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    queue.forEach((r, i) => {
+      const isReserved = r.type === 'reserved';
+      const item = document.createElement('div');
+      item.className = 'flex items-center justify-between p-3 border rounded-lg ' +
+        (isReserved ? 'border-indigo-200 bg-indigo-50/30' : 'border-emerald-200 bg-emerald-50/30');
+      item.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-7 h-7 rounded-full bg-slate-700 text-white text-sm font-semibold flex items-center justify-center">${i + 1}</div>
+          <div>
+            <div class="font-medium">${r.student_grade}-${r.student_class_no}-${r.student_number} ${r.student_name}</div>
+            <div class="text-xs text-slate-500">${r.block}블록 · ${isReserved ? '사전예약' : '당일추가'}</div>
+          </div>
+        </div>
+        <div class="text-xs ${isReserved ? 'text-indigo-700' : 'text-emerald-700'} font-medium">${isReserved ? '사전' : '당일'}</div>
+      `;
+      list.appendChild(item);
+    });
+  }
+  const reservedCount = queue.filter(r => r.type === 'reserved').length;
+  const walkinCount = queue.length - reservedCount;
+  stats.textContent = `총 ${queue.length}명 (사전 ${reservedCount} · 당일 ${walkinCount})`;
+}
+
+function startPoll() {
+  stopPoll();
+  if (document.hidden) return;
+  state.pollTimer = setInterval(refreshQueue, POLL_MS);
+}
+function stopPoll() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+// ===== 타이머 =====
+function startProgressTimer(startedAtIso) {
+  stopProgressTimer();
+  const startedAt = new Date(startedAtIso);
+  const tick = () => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const m = Math.floor(elapsed / 60);
+    const s = elapsed % 60;
+    document.getElementById('progress-timer').textContent =
+      `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+  tick();
+  state.progressTimer = setInterval(tick, 1000);
+}
+function stopProgressTimer() {
+  if (state.progressTimer) { clearInterval(state.progressTimer); state.progressTimer = null; }
+}
+
+function startCallingTimer(calledAtIso) {
+  stopCallingTimer();
+  if (!calledAtIso) return;
+  const calledAt = new Date(calledAtIso);
+  const tick = () => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - calledAt) / 1000));
+    const el = document.getElementById('calling-elapsed');
+    el.textContent = `호출 후 ${elapsed}초 경과` + (elapsed >= 180 ? ' — 노쇼 가능' : '');
+    if (elapsed >= 180) el.classList.add('text-red-600', 'font-semibold');
+    else el.classList.remove('text-red-600', 'font-semibold');
+  };
+  tick();
+  state.callingTimer = setInterval(tick, 1000);
+}
+function stopCallingTimer() {
+  if (state.callingTimer) { clearInterval(state.callingTimer); state.callingTimer = null; }
+}
+
+// ===== 액션 =====
+async function callNext() {
+  showLoader(true);
+  try {
+    const r = await callApi('callNext', { booth_id: state.boothId });
+    toast(`${r.student_label} 호출됨`, 'success');
+    state.lastQueueV = ''; // 즉시 강제 갱신
+    refreshQueue();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+async function complete() {
+  const ok = await customConfirm({
+    title: '상담 완료',
+    message: '이 학생과의 상담을 종료하시겠습니까?',
+    okText: '완료'
+  });
+  if (!ok) return;
+  showLoader(true);
+  try {
+    await callApi('completeConsultation', { booth_id: state.boothId });
+    toast('상담이 완료 처리되었습니다', 'success');
+    state.lastQueueV = '';
+    refreshQueue();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+async function noShow() {
+  const ok = await customConfirm({
+    title: '노쇼 처리',
+    message: '호출된 학생이 도착하지 않았습니다. 이 학생은 대기열 끝으로 이동되고, 다음 학생을 호출할 수 있습니다.',
+    okText: '노쇼 처리',
+    cancelText: '돌아가기',
+    danger: true
+  });
+  if (!ok) return;
+  showLoader(true);
+  try {
+    await callApi('skipNoShow', { booth_id: state.boothId });
+    toast('노쇼 처리되었습니다', 'success');
+    state.lastQueueV = '';
+    refreshQueue();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+// ===== QR 스캐너 =====
+async function openScanner() {
+  document.getElementById('scanner-modal').classList.remove('hidden');
+  try {
+    state.scanner = new Html5Qrcode("reader");
+    await state.scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 260, height: 260 } },
+      onScanSuccess,
+      () => { /* 인식 안 됨은 무시 */ }
+    );
+  } catch (err) {
+    toast('카메라를 열 수 없습니다 — 권한을 확인해 주세요', 'error');
+    closeScanner();
+  }
+}
+
+async function closeScanner() {
+  document.getElementById('scanner-modal').classList.add('hidden');
+  if (state.scanner) {
+    try {
+      if (state.scanner.isScanning) await state.scanner.stop();
+      state.scanner.clear();
+    } catch (e) { /* ignore */ }
+    state.scanner = null;
+  }
+}
+
+let _scanLock = false;
+async function onScanSuccess(decodedText) {
+  if (_scanLock) return;
+  _scanLock = true;
+  await closeScanner();
+  showLoader(true);
+  try {
+    const r = await callApi('scanQR', { booth_id: state.boothId, qr_payload: decodedText });
+    showWelcome(r.student);
+    state.lastQueueV = '';
+    refreshQueue();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+    setTimeout(() => { _scanLock = false; }, 1000);
+  }
+}
+
+function showWelcome(student) {
+  const m = document.getElementById('welcome-modal');
+  document.getElementById('welcome-name').textContent =
+    `${student.grade}-${student.class_no}-${student.number} ${student.name}`;
+  document.getElementById('welcome-info').textContent = '환영합니다';
+  m.classList.remove('hidden');
+  setTimeout(() => m.classList.add('hidden'), 1800);
+}
+
+// ===== 초기화 =====
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('logout-btn').addEventListener('click', logout);
+  document.getElementById('action-call-next').addEventListener('click', callNext);
+  document.getElementById('action-scan').addEventListener('click', openScanner);
+  document.getElementById('action-complete').addEventListener('click', complete);
+  document.getElementById('action-no-show').addEventListener('click', noShow);
+  document.getElementById('scanner-cancel').addEventListener('click', closeScanner);
+
+  // 백그라운드 시 폴링·스캐너 정지
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPoll();
+      closeScanner();
+    } else if (state.boothId) {
+      refreshQueue();
+      startPoll();
+    }
+  });
+
+  // 부스 결정: URL 파라미터 > localStorage > 선택 화면
+  const boothId = URL_BOOTH_ID || localStorage.getItem('byh_booth_id');
+  if (boothId) {
+    loginAs(boothId);
+  } else {
+    show('login');
+    loadBoothOptions();
+  }
+});
+</script>
+</body>
+</html>
