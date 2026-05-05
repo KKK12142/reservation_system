@@ -23,8 +23,32 @@ const SHEETS = {
 const ACTIVE_STATUS = ['waiting', 'calling', 'in_progress'];
 
 // ===== 진입점 =====
-function doGet(e)  { return handle(e); }
+function doGet(e) {
+  const params = (e && e.parameter) || {};
+  // 페이지 라우팅: ?page=student|teacher|display
+  const page = params.page || (params.action ? null : 'student');
+  if (page) {
+    const allowed = ['student', 'teacher', 'display'];
+    if (allowed.indexOf(page) === -1) {
+      return HtmlService.createHtmlOutput('Not found: ' + page);
+    }
+    const t = HtmlService.createTemplateFromFile(page);
+    t.appUrl = ScriptApp.getService().getUrl();
+    t.boothId = params.booth_id || '';
+    return t.evaluate()
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, user-scalable=no')
+      .setTitle('부여여고 박람회 상담 시스템')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+  return handle(e);
+}
+
 function doPost(e) { return handle(e); }
+
+// HtmlService 페이지에서 google.script.run으로 호출하는 통합 API 래퍼
+function api(action, params) {
+  return dispatch(action, params || {});
+}
 
 function handle(e) {
   try {

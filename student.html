@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>부여여고 박람회 상담</title>
+<base target="_top">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  .view { display: none; }
+  .view.active { display: block; }
+  /* iOS 안드로이드 input zoom 방지 */
+  input { font-size: 16px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+
+<div id="app" class="max-w-md mx-auto p-4 pb-24">
+
+  <!-- 상단 헤더 (로그인 후 노출) -->
+  <header id="header" class="hidden mb-4 pb-3 border-b flex items-center justify-between">
+    <div>
+      <div class="text-xs text-slate-500">부여여고 박람회</div>
+      <div id="header-name" class="text-base font-semibold"></div>
+    </div>
+    <button id="logout-btn" class="text-xs text-slate-500 px-2 py-1 border rounded">로그아웃</button>
+  </header>
+
+  <!-- 로그인 -->
+  <div id="login-view" class="view active">
+    <div class="text-center mt-10 mb-8">
+      <div class="text-2xl font-bold">부여여자고등학교</div>
+      <div class="text-base text-slate-600 mt-2">2026 교육과정 박람회</div>
+      <div class="text-sm text-slate-400 mt-1">5월 14일 (목) 상담 신청</div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm p-5 space-y-3">
+      <div>
+        <label class="block text-sm text-slate-600 mb-1">학번</label>
+        <input id="login-id" type="text" inputmode="numeric" autocomplete="off"
+          class="w-full border rounded-lg px-3 py-3" placeholder="예: 20245">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-600 mb-1">이름</label>
+        <input id="login-name" type="text" autocomplete="off"
+          class="w-full border rounded-lg px-3 py-3" placeholder="홍길동">
+      </div>
+      <button id="login-submit" class="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold mt-2">
+        로그인
+      </button>
+      <div id="login-error" class="text-sm text-red-600 hidden"></div>
+    </div>
+  </div>
+
+  <!-- 홈 -->
+  <div id="home-view" class="view">
+    <div id="home-block-banner" class="hidden mb-3 rounded-xl p-3 text-sm"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <button class="menu-btn bg-white rounded-2xl shadow-sm p-5 flex flex-col items-center" data-go="qr">
+        <div class="text-3xl">📱</div>
+        <div class="text-sm font-semibold mt-2">내 QR 보기</div>
+        <div class="text-xs text-slate-400 mt-1">교사 태블릿에 스캔</div>
+      </button>
+      <button class="menu-btn bg-white rounded-2xl shadow-sm p-5 flex flex-col items-center" data-go="reserve">
+        <div class="text-3xl">📅</div>
+        <div class="text-sm font-semibold mt-2">예약하기</div>
+        <div id="reserve-mode-label" class="text-xs text-slate-400 mt-1">&nbsp;</div>
+      </button>
+      <button class="menu-btn bg-white rounded-2xl shadow-sm p-5 flex flex-col items-center" data-go="status">
+        <div class="text-3xl">🔔</div>
+        <div class="text-sm font-semibold mt-2">내 예약 현황</div>
+        <div id="status-count" class="text-xs text-slate-400 mt-1">예약 0건</div>
+      </button>
+      <button class="menu-btn bg-white rounded-2xl shadow-sm p-5 flex flex-col items-center" data-go="info">
+        <div class="text-3xl">🗺️</div>
+        <div class="text-sm font-semibold mt-2">박람회 안내</div>
+        <div class="text-xs text-slate-400 mt-1">시간표·규칙</div>
+      </button>
+    </div>
+  </div>
+
+  <!-- QR -->
+  <div id="qr-view" class="view">
+    <button class="back-btn text-sm text-slate-500 mb-3">← 뒤로</button>
+    <div class="bg-white rounded-2xl shadow-sm p-6 text-center">
+      <div class="text-base text-slate-600 mb-1">내 QR 코드</div>
+      <div id="qr-name" class="text-xl font-bold mb-4"></div>
+      <div id="qrcode" class="flex justify-center my-3"></div>
+      <div class="text-sm text-slate-500 mt-4 leading-relaxed">
+        교사 태블릿에 이 화면을 보여주세요.<br>
+        화면 밝기를 최대로 올리면 인식이 빠릅니다.
+      </div>
+    </div>
+  </div>
+
+  <!-- 예약 -->
+  <div id="reserve-view" class="view">
+    <button class="back-btn text-sm text-slate-500 mb-3">← 뒤로</button>
+    <div id="reserve-banner" class="rounded-xl p-3 mb-3 text-sm"></div>
+    <div id="booth-list" class="space-y-1"></div>
+  </div>
+
+  <!-- 현황 -->
+  <div id="status-view" class="view">
+    <button class="back-btn text-sm text-slate-500 mb-3">← 뒤로</button>
+    <div class="text-base font-semibold mb-3">내 예약 현황</div>
+    <div id="status-list" class="space-y-3"></div>
+    <div id="status-empty" class="text-center text-slate-400 py-12 hidden">예약이 없습니다</div>
+    <div class="text-xs text-slate-400 text-center mt-4">10초마다 자동 갱신</div>
+  </div>
+
+  <!-- 안내 -->
+  <div id="info-view" class="view">
+    <button class="back-btn text-sm text-slate-500 mb-3">← 뒤로</button>
+    <div class="bg-white rounded-2xl shadow-sm p-5 text-sm leading-relaxed space-y-4">
+      <div>
+        <div class="font-semibold mb-1">📅 박람회 일정</div>
+        <div class="text-slate-600">2026년 5월 14일 (목) 09:30 ~ 16:30</div>
+      </div>
+      <div>
+        <div class="font-semibold mb-1">⏰ 상담 시간 블록</div>
+        <ul class="text-slate-600 space-y-0.5">
+          <li>1블록 09:40 ~ 10:30</li>
+          <li>2블록 10:40 ~ 11:30</li>
+          <li>3블록 11:40 ~ 12:30</li>
+          <li class="text-slate-400">— 점심 12:30 ~ 13:30 —</li>
+          <li>4블록 13:30 ~ 14:20</li>
+          <li>5블록 14:30 ~ 15:20</li>
+          <li>6블록 15:30 ~ 16:20</li>
+        </ul>
+      </div>
+      <div>
+        <div class="font-semibold mb-1">📝 예약 방법</div>
+        <ul class="text-slate-600 space-y-1 list-disc pl-5">
+          <li><b>09:30 이전 (사전예약)</b>: 학생당 최대 2건. 부스와 희망 블록을 선택합니다.</li>
+          <li><b>09:30 이후 (당일 추가)</b>: 추가 건수 제한 없음. 같은 교과군은 1회만 가능.</li>
+          <li>본인 차례가 임박하면 <b>내 예약 현황</b>에서 알 수 있습니다.</li>
+          <li>해당 부스로 이동해 <b>내 QR 보기</b> 화면을 교사 태블릿에 스캔.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="font-semibold mb-1">⚠️ 노쇼 안내</div>
+        <div class="text-slate-600">호출 후 3분 안에 도착하지 않으면 대기열 끝으로 이동됩니다.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- 블록 선택 모달 -->
+<div id="block-picker" class="hidden fixed inset-0 bg-black/50 flex items-end z-40">
+  <div class="bg-white rounded-t-3xl w-full max-w-md mx-auto p-5">
+    <div class="text-base font-semibold mb-1">희망 블록 선택</div>
+    <div id="picker-booth" class="text-sm text-slate-500 mb-4"></div>
+    <div class="grid grid-cols-2 gap-2">
+      <button data-block="1" class="block-btn p-3 border rounded-lg text-left">1블록<div class="text-xs text-slate-500">09:40 ~ 10:30</div></button>
+      <button data-block="2" class="block-btn p-3 border rounded-lg text-left">2블록<div class="text-xs text-slate-500">10:40 ~ 11:30</div></button>
+      <button data-block="3" class="block-btn p-3 border rounded-lg text-left">3블록<div class="text-xs text-slate-500">11:40 ~ 12:30</div></button>
+      <button data-block="4" class="block-btn p-3 border rounded-lg text-left">4블록<div class="text-xs text-slate-500">13:30 ~ 14:20</div></button>
+      <button data-block="5" class="block-btn p-3 border rounded-lg text-left">5블록<div class="text-xs text-slate-500">14:30 ~ 15:20</div></button>
+      <button data-block="6" class="block-btn p-3 border rounded-lg text-left">6블록<div class="text-xs text-slate-500">15:30 ~ 16:20</div></button>
+    </div>
+    <button id="picker-cancel" class="w-full mt-4 py-2 text-slate-500">취소</button>
+  </div>
+</div>
+
+<!-- 로딩/토스트 -->
+<div id="loader" class="hidden fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+  <div class="bg-white rounded-lg px-6 py-4 text-sm">처리 중...</div>
+</div>
+<div id="toast" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white text-sm px-4 py-2 rounded-lg max-w-xs text-center"></div>
+
+<script>
+const state = {
+  student: null,
+  pollTimer: null,
+  qrInstance: null,
+  toastTimer: null,
+  pendingBooth: null
+};
+
+// ===== API 래퍼 =====
+function callApi(action, params) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error('서버 연결 실패 — 페이지를 새로고침해 주세요'));
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => reject(new Error(err && err.message || String(err))))
+      .api(action, params || {});
+  });
+}
+
+// ===== UI 헬퍼 =====
+function show(view) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(view + '-view').classList.add('active');
+  document.getElementById('header').classList.toggle('hidden', view === 'login');
+  if (view !== 'status') stopStatusPoll();
+  window.scrollTo(0, 0);
+}
+
+function showLoader(on) {
+  document.getElementById('loader').classList.toggle('hidden', !on);
+}
+
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  let bg = 'bg-slate-900';
+  if (kind === 'error') bg = 'bg-red-600';
+  else if (kind === 'success') bg = 'bg-emerald-600';
+  t.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white text-sm px-4 py-2 rounded-lg max-w-xs text-center ${bg}`;
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+// ===== 로그인/로그아웃 =====
+async function tryLogin() {
+  const sid = document.getElementById('login-id').value.trim();
+  const name = document.getElementById('login-name').value.trim();
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+  if (!sid || !name) {
+    errEl.textContent = '학번과 이름을 모두 입력하세요';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  showLoader(true);
+  try {
+    const stu = await callApi('login', { student_id: sid, name: name });
+    state.student = stu;
+    localStorage.setItem('byh_student', JSON.stringify(stu));
+    setHeaderName(stu);
+    show('home');
+    refreshHome();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    showLoader(false);
+  }
+}
+
+function logout() {
+  localStorage.removeItem('byh_student');
+  state.student = null;
+  document.getElementById('login-id').value = '';
+  document.getElementById('login-name').value = '';
+  show('login');
+}
+
+function setHeaderName(stu) {
+  document.getElementById('header-name').textContent = `${stu.grade}-${stu.class_no}-${stu.number} ${stu.name}`;
+}
+
+// ===== 홈 =====
+async function refreshHome() {
+  try {
+    const [reservations, blockInfo] = await Promise.all([
+      callApi('getMyReservations', { student_id: state.student.student_id }),
+      callApi('getCurrentBlock', {})
+    ]);
+    const active = reservations.filter(r =>
+      ['waiting', 'calling', 'in_progress'].indexOf(r.status) !== -1
+    );
+    document.getElementById('status-count').textContent = `예약 ${active.length}건`;
+
+    const banner = document.getElementById('home-block-banner');
+    const modeLabel = document.getElementById('reserve-mode-label');
+    if (blockInfo.block === 0) {
+      banner.className = 'mb-3 rounded-xl p-3 text-sm bg-indigo-50 text-indigo-800';
+      banner.textContent = '📋 사전예약 기간 (~09:30) — 학생당 최대 2건';
+      banner.classList.remove('hidden');
+      modeLabel.textContent = '사전예약 (~09:30)';
+    } else if (blockInfo.block >= 7) {
+      banner.className = 'mb-3 rounded-xl p-3 text-sm bg-slate-100 text-slate-600';
+      banner.textContent = '🔚 박람회가 종료되었습니다';
+      banner.classList.remove('hidden');
+      modeLabel.textContent = '신청 마감';
+    } else {
+      banner.className = 'mb-3 rounded-xl p-3 text-sm bg-emerald-50 text-emerald-800';
+      banner.textContent = `▶ ${blockInfo.block}블록 진행 중 — 자유롭게 추가 신청 가능`;
+      banner.classList.remove('hidden');
+      modeLabel.textContent = `${blockInfo.block}블록 진행 중`;
+    }
+  } catch (e) {
+    // 홈 새로고침 실패는 조용히
+  }
+}
+
+// ===== QR =====
+function showQR() {
+  const stu = state.student;
+  document.getElementById('qr-name').textContent = `${stu.grade}-${stu.class_no}-${stu.number} ${stu.name}`;
+  const container = document.getElementById('qrcode');
+  container.innerHTML = '';
+  state.qrInstance = new QRCode(container, {
+    text: `STU:${stu.student_id}:${stu.qr_token}`,
+    width: 240,
+    height: 240,
+    correctLevel: QRCode.CorrectLevel.M
+  });
+  show('qr');
+}
+
+// ===== 예약 =====
+async function showReserve() {
+  show('reserve');
+  showLoader(true);
+  try {
+    const [booths, blockInfo, myRes] = await Promise.all([
+      callApi('getBooths', {}),
+      callApi('getCurrentBlock', {}),
+      callApi('getMyReservations', { student_id: state.student.student_id })
+    ]);
+    const isPreReg = blockInfo.block === 0;
+    const isClosed = blockInfo.block >= 7;
+    const banner = document.getElementById('reserve-banner');
+    if (isClosed) {
+      banner.className = 'rounded-xl p-3 mb-3 text-sm bg-slate-100 text-slate-600';
+      banner.textContent = '박람회가 종료되어 신규 예약이 불가합니다';
+    } else if (isPreReg) {
+      banner.className = 'rounded-xl p-3 mb-3 text-sm bg-indigo-50 text-indigo-800';
+      banner.textContent = '사전예약 기간 — 부스와 희망 블록을 선택하세요 (학생당 최대 2건)';
+    } else {
+      banner.className = 'rounded-xl p-3 mb-3 text-sm bg-emerald-50 text-emerald-800';
+      banner.textContent = `${blockInfo.block}블록 진행 중 — 부스를 누르면 즉시 대기열에 추가됩니다`;
+    }
+
+    const activeSubjects = new Set(myRes
+      .filter(r => ['waiting', 'calling', 'in_progress'].indexOf(r.status) !== -1)
+      .map(r => r.subject_group));
+
+    const grouped = {};
+    booths.forEach(b => (grouped[b.space] = grouped[b.space] || []).push(b));
+
+    const list = document.getElementById('booth-list');
+    list.innerHTML = '';
+    ['A', 'B', 'C'].forEach(space => {
+      const items = grouped[space];
+      if (!items || items.length === 0) return;
+      const header = document.createElement('div');
+      header.className = 'text-xs font-semibold text-slate-500 mt-4 mb-2 px-1';
+      header.textContent = space === 'C' ? '공간 C — 학생 멘토 부스' : `공간 ${space} — 교과 상담`;
+      list.appendChild(header);
+      items.forEach(b => {
+        const taken = activeSubjects.has(b.subject_group);
+        const card = document.createElement('button');
+        card.className = 'w-full text-left bg-white rounded-xl shadow-sm p-3 mb-2 flex items-center justify-between transition active:scale-95 ' +
+          ((taken || isClosed) ? 'opacity-50' : '');
+        card.disabled = taken || isClosed;
+        const grade = Number(b.target_grade);
+        const gradeLabel = grade === 0 ? '전체' : grade + '학년 담당';
+        card.innerHTML = `
+          <div>
+            <div class="font-semibold">${b.subject_group}</div>
+            <div class="text-xs text-slate-500 mt-0.5">${gradeLabel} · ${b.room || b.booth_id}</div>
+          </div>
+          <div class="text-xs ${taken ? 'text-slate-400' : 'text-indigo-600'}">${taken ? '예약됨' : '신청 ›'}</div>
+        `;
+        card.addEventListener('click', () => onBoothClick(b, isPreReg));
+        list.appendChild(card);
+      });
+    });
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+function onBoothClick(booth, isPreReg) {
+  if (isPreReg) {
+    state.pendingBooth = booth;
+    const grade = Number(booth.target_grade);
+    const gradeLabel = grade === 0 ? '' : ` (${grade}학년 담당)`;
+    document.getElementById('picker-booth').textContent = `${booth.subject_group}${gradeLabel} · ${booth.room || ''}`;
+    document.getElementById('block-picker').classList.remove('hidden');
+  } else {
+    confirmAndCreate(booth, null);
+  }
+}
+
+async function confirmAndCreate(booth, block) {
+  const grade = Number(booth.target_grade);
+  const gradeLabel = grade === 0 ? '' : `${grade}학년 담당 `;
+  const blockLabel = block ? ` (${block}블록 희망)` : '';
+  if (!confirm(`${booth.subject_group} ${gradeLabel}부스에 예약하시겠습니까?${blockLabel}`)) return;
+  showLoader(true);
+  try {
+    await callApi('createReservation', {
+      student_id: state.student.student_id,
+      booth_id: booth.booth_id,
+      block: block
+    });
+    toast('예약이 완료되었습니다', 'success');
+    showStatus();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+// ===== 현황 =====
+async function showStatus() {
+  show('status');
+  await refreshStatus();
+  startStatusPoll();
+}
+
+async function refreshStatus() {
+  try {
+    const list = await callApi('getMyQueueStatus', { student_id: state.student.student_id });
+    const el = document.getElementById('status-list');
+    const empty = document.getElementById('status-empty');
+    el.innerHTML = '';
+    if (!list || list.length === 0) {
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    list.forEach(item => {
+      const r = item.reservation;
+      const b = item.booth || {};
+      let bg = 'bg-white';
+      let badge = '';
+      if (r.status === 'in_progress') {
+        bg = 'bg-emerald-50 border-2 border-emerald-300';
+        badge = '🟢 상담 중';
+      } else if (r.status === 'calling') {
+        bg = 'bg-amber-50 border-2 border-amber-300 animate-pulse';
+        badge = '🔔 호출됨!';
+      } else {
+        const ahead = item.ahead_count == null ? '?' : item.ahead_count;
+        badge = ahead === 0 ? '⏳ 곧 호출' : `⏳ 앞 ${ahead}명`;
+      }
+      const grade = Number(b.target_grade);
+      const gradeLabel = grade === 0 ? '전체' : grade + '학년';
+      const card = document.createElement('div');
+      card.className = `rounded-2xl shadow-sm p-4 ${bg}`;
+      card.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-semibold">${r.subject_group} <span class="text-xs text-slate-500 font-normal">(${gradeLabel})</span></div>
+            <div class="text-xs text-slate-500 mt-0.5">${b.room || ''} · ${r.block}블록 · ${r.type === 'reserved' ? '사전예약' : '당일추가'}</div>
+          </div>
+          <div class="text-sm font-semibold whitespace-nowrap">${badge}</div>
+        </div>
+        ${r.status === 'calling' ? '<div class="mt-3 text-sm text-amber-800 font-medium">⚡ 즉시 부스로 이동하여 QR을 보여주세요</div>' : ''}
+        ${r.status === 'waiting' ? `<button data-rid="${r.reservation_id}" class="cancel-btn mt-3 text-xs text-red-600 px-2 py-1 border border-red-200 rounded">예약 취소</button>` : ''}
+      `;
+      el.appendChild(card);
+    });
+    document.querySelectorAll('.cancel-btn').forEach(btn => {
+      btn.addEventListener('click', () => cancelReservation(btn.dataset.rid));
+    });
+  } catch (e) {
+    // 폴링 실패는 조용히
+  }
+}
+
+async function cancelReservation(rid) {
+  if (!confirm('정말 예약을 취소하시겠습니까?')) return;
+  showLoader(true);
+  try {
+    await callApi('cancelReservation', { reservation_id: rid, student_id: state.student.student_id });
+    toast('예약이 취소되었습니다', 'success');
+    refreshStatus();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    showLoader(false);
+  }
+}
+
+function startStatusPoll() {
+  stopStatusPoll();
+  state.pollTimer = setInterval(refreshStatus, 10000);
+}
+function stopStatusPoll() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+// ===== 초기화 =====
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('login-submit').addEventListener('click', tryLogin);
+  document.getElementById('login-name').addEventListener('keypress', e => { if (e.key === 'Enter') tryLogin(); });
+  document.getElementById('login-id').addEventListener('keypress', e => { if (e.key === 'Enter') document.getElementById('login-name').focus(); });
+  document.getElementById('logout-btn').addEventListener('click', logout);
+
+  document.querySelectorAll('.menu-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dest = btn.dataset.go;
+      if (dest === 'qr') showQR();
+      else if (dest === 'reserve') showReserve();
+      else if (dest === 'status') showStatus();
+      else if (dest === 'info') show('info');
+    });
+  });
+  document.querySelectorAll('.back-btn').forEach(btn => {
+    btn.addEventListener('click', () => { show('home'); refreshHome(); });
+  });
+
+  // 블록 선택 모달
+  document.querySelectorAll('.block-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const block = Number(btn.dataset.block);
+      const booth = state.pendingBooth;
+      document.getElementById('block-picker').classList.add('hidden');
+      state.pendingBooth = null;
+      if (booth) confirmAndCreate(booth, block);
+    });
+  });
+  document.getElementById('picker-cancel').addEventListener('click', () => {
+    document.getElementById('block-picker').classList.add('hidden');
+    state.pendingBooth = null;
+  });
+
+  // 세션 복원
+  const saved = localStorage.getItem('byh_student');
+  if (saved) {
+    try {
+      state.student = JSON.parse(saved);
+      setHeaderName(state.student);
+      show('home');
+      refreshHome();
+    } catch (e) {
+      logout();
+    }
+  }
+});
+</script>
+</body>
+</html>
